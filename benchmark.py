@@ -16,7 +16,7 @@ Stages timed
 Usage
 -----
     python benchmark.py [--device CPU|GPU] [--runs 20] [--warmup 3]
-                        [--image PATH_TO_IMAGE]
+                        [--image PATH_TO_IMAGE] [--precision fp16|int8|fp16+int8]
 
 If no image is supplied a synthetic 378×378 RGB image is used.
 Results are printed to stdout and written to benchmark_results.json.
@@ -183,6 +183,57 @@ def _load_image(path: str) -> np.ndarray:
     if bgr is None:
         raise FileNotFoundError(f"Could not read image: {path}")
     return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+
+def _ov_runtime_config(device: str) -> dict[str, str]:
+    """Return a conservative OpenVINO runtime config for the target device."""
+    config: dict[str, str] = {"PERFORMANCE_HINT": "LATENCY"}
+    if device.upper() == "GPU":
+        cache_dir = Path(__file__).parent / ".openvino_cache" / "GPU"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        config.update(
+            {
+                "NUM_STREAMS": "1",
+                "CACHE_DIR": str(cache_dir.resolve()),
+            }
+        )
+    return config
+
+
+def _load_ov_visual_model(model_dir: Path, requested_device: str):
+    """Load the compiled visual model, retrying on CPU if GPU compilation fails."""
+    ov_config = _ov_runtime_config(requested_device)
+    try:
+        return OVModelOpenCLIPVisual.from_pretrained(
+            model_dir,
+            device=requested_device,
+            ov_config=ov_config,
+        )
+    except RuntimeError as exc:
+        if requested_device.upper() == "CPU":
+            raise
+        logger.warning(
+            "OpenVINO model load failed on %s (%s). Retrying on CPU.",
+            requested_device,
+            exc,
+        )
+        return OVModelOpenCLIPVisual.from_pretrained(
+            model_dir,
+            device="CPU",
+            ov_config=_ov_runtime_config("CPU"),
+        )
+
+
+def _parse_precision_mode(value: str) -> list[tuple[str, Path]]:
+    """Map the CLI precision selector to the model directories to benchmark."""
+    normalized = value.strip().lower()
+    if normalized == "fp16":
+        return [("FP16", OV_FP16_DIR)]
+    if normalized == "int8":
+        return [("INT8", OV_INT8_DIR)]
+    if normalized in {"fp16+int8", "both"}:
+        return [("FP16", OV_FP16_DIR), ("INT8", OV_INT8_DIR)]
+    raise ValueError("precision must be one of: fp16, int8, fp16+int8")
 
 
 # ---------------------------------------------------------------------------
@@ -485,15 +536,26 @@ def main() -> None:
     parser.add_argument("--runs",    type=int, default=20,  help="Number of measured inference runs (default: 20)")
     parser.add_argument("--warmup",  type=int, default=3,   help="Number of warmup runs (default: 3)")
     parser.add_argument("--image",   default=None,          help="Path to a sample image (default: synthetic)")
+    parser.add_argument(
+        "--precision",
+        default="fp16+int8",
+        help="Inference precision to run: fp16, int8, or fp16+int8 (default: fp16+int8)",
+    )
     parser.add_argument("--skip-export", action="store_true",
                         help="Skip model export if OV directories already exist (implied automatically)")
     args = parser.parse_args()
+
+    try:
+        precision_plan = _parse_precision_mode(args.precision)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
     print()
     print("=" * 68)
     print("  OpenCLIP + OpenVINO  ─  Latency Benchmark")
     print(f"  Model  : {MODEL_ID}")
     print(f"  Device : {args.device}  (auto-resolved)")
+    print(f"  Precision mode : {args.precision}")
     print(f"  Runs   : {args.warmup} warmup + {args.runs} measured")
     print("=" * 68)
 
@@ -545,12 +607,12 @@ def main() -> None:
     }
     _print_label_init_summary(label_init_s, len(labels))
 
-    # ── Phase 3: Inference benchmarks (FP16 and INT8) ─────────────────────
+    # ── Phase 3: Inference benchmarks (selected precision(s)) ──────────────
     inference_results: list[dict] = []
 
-    for precision, model_dir in [("FP16", OV_FP16_DIR), ("INT8", OV_INT8_DIR)]:
+    for precision, model_dir in precision_plan:
         logger.info("Loading OV visual model [%s] from %s on %s …", precision, model_dir, ov_device)
-        ov_vision = OVModelOpenCLIPVisual.from_pretrained(model_dir, device=ov_device)
+        ov_vision = _load_ov_visual_model(model_dir, ov_device)
 
         result = phase_inference_benchmark(
             img_array=img_array,
@@ -582,6 +644,9 @@ def main() -> None:
             print(f"  INT8 mean total : {int8_total:.2f} ms")
             print(f"  Speedup         : {speedup:.2f}x  ({'INT8 faster' if speedup > 1 else 'FP16 faster'})")
             all_results["int8_vs_fp16_speedup"] = round(speedup, 4)
+    else:
+        _hr("Speedup")
+        print("  Skipped because only one precision mode was selected.")
 
     # ── Save JSON report ───────────────────────────────────────────────────
     with open(RESULTS_PATH, "w") as f:

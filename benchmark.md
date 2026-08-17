@@ -66,6 +66,24 @@ Run the benchmark with default settings:
 python benchmark.py
 ```
 
+Run only FP16 inference:
+
+```bash
+python benchmark.py --precision fp16
+```
+
+Run only INT8 inference:
+
+```bash
+python benchmark.py --precision int8
+```
+
+Run both FP16 and INT8 inference:
+
+```bash
+python benchmark.py --precision fp16+int8
+```
+
 Run with CPU and custom iterations:
 
 ```bash
@@ -90,6 +108,7 @@ Available options:
 - `--runs` : number of measured inference runs
 - `--warmup` : number of warmup runs before measuring
 - `--image` : path to an image; otherwise a synthetic test image is used
+- `--precision` : select `fp16`, `int8`, or `fp16+int8`
 - `--skip-export` : flag to skip model export when directories already exist
 
 ## Output
@@ -105,3 +124,4 @@ The report includes model details, export timings, label init timing, and per-pr
 - The first run can take a while because the OpenVINO export and label embedding initialization are one-time costs.
 - If GPU is unavailable, the benchmark falls back to CPU automatically.
 - The benchmark uses the sample class labels already defined in the repo under `labels.json`.
+- On some integrated GPUs, OpenVINO may fail during kernel compilation with `CL_OUT_OF_HOST_MEMORY`. The benchmark loader now retries on CPU in that case, and the `--device CPU` option is the most reliable fallback when the GPU compiler path is unstable.
