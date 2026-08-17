@@ -1,0 +1,2063 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Automatic Vision-based Checkout</title>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Nunito+Sans:wght@400;600;700&display=swap" rel="stylesheet"/>
+  <style>
+    :root {
+      --bg:        #12141c;
+      --panel:     #1a1d2e;
+      --card:      #21253a;
+      --card-h:    #272b42;
+      --border:    #2e3350;
+      --accent:    #4f6ef7;
+      --accent-h:  #6b85ff;
+      --purple:    #9b6ef7;
+      --teal:      #3ecfcf;
+      --orange:    #f7956e;
+      --green:     #3ecf8e;
+      --red:       #f76e6e;
+      --yellow:    #f7c96e;
+      --text:      #e8eaf6;
+      --muted:     #8891b8;
+      --faint:     #3a4060;
+      --radius-lg: 20px;
+      --radius:    14px;
+      --radius-sm: 9px;
+      --font:      'Nunito', sans-serif;
+      --font-body: 'Nunito Sans', sans-serif;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    /* ── App shell ── */
+    .app {
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      width: 100%;
+      max-width: 1040px;
+      min-height: 620px;
+      background: var(--panel);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      box-shadow: 0 32px 80px rgba(0,0,0,0.55);
+    }
+
+    /* ══════════════════════════════════════
+       LEFT PANEL
+    ══════════════════════════════════════ */
+    .left {
+      padding: 28px 28px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      border-right: 1px solid var(--border);
+    }
+
+    /* ── Top bar ── */
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .app-title {
+      font-size: 1.3rem;
+      font-weight: 900;
+      letter-spacing: -0.4px;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .app-title .icon-badge {
+      width: 34px; height: 34px;
+      background: var(--accent);
+      border-radius: 9px;
+      display: grid; place-items: center;
+      font-size: 17px;
+    }
+    .topbar-actions {
+      display: flex; align-items: center; gap: 8px;
+    }
+    .info-btn, .settings-btn {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      border: 1.5px solid var(--border);
+      background: transparent;
+      color: var(--muted);
+      font-family: var(--font);
+      font-size: 0.8rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: grid; place-items: center;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .info-btn:hover, .settings-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .settings-btn svg { width: 15px; height: 15px; }
+
+    /* ── Search bar ── */
+    .search-wrap {
+      position: relative;
+    }
+    .search-input {
+      width: 100%;
+      background: var(--card);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 11px 42px 11px 16px;
+      font-family: var(--font-body);
+      font-size: 0.9rem;
+      color: var(--text);
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .search-input::placeholder { color: var(--muted); }
+    .search-input:focus { border-color: var(--accent); }
+    .search-icon {
+      position: absolute; right: 13px; top: 50%; transform: translateY(-50%);
+      color: var(--muted); pointer-events: none;
+    }
+
+    /* ── Category grid ── */
+    .category-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      flex: 1;
+    }
+
+    .cat-card {
+      background: var(--card);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 22px 16px 18px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      cursor: pointer;
+      transition: background 0.18s, border-color 0.18s, transform 0.15s, box-shadow 0.18s;
+      position: relative;
+      overflow: hidden;
+      min-height: 140px;
+      user-select: none;
+    }
+    .cat-card::before {
+      content: '';
+      position: absolute; inset: 0;
+      opacity: 0;
+      transition: opacity 0.2s;
+      border-radius: inherit;
+    }
+    .cat-card:hover {
+      background: var(--card-h);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+    }
+    .cat-card:hover::before { opacity: 1; }
+    .cat-card:active { transform: translateY(0); }
+
+    .cat-card.active {
+      border-color: var(--accent);
+      background: rgba(79,110,247,0.12);
+    }
+
+    .cat-label {
+      font-size: 0.95rem;
+      font-weight: 800;
+      color: var(--text);
+      text-align: center;
+      letter-spacing: -0.2px;
+    }
+
+    .cat-icon {
+      width: 64px; height: 64px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .cat-icon svg { width: 100%; height: 100%; }
+
+    /* icon color themes */
+    .cat-card[data-cat="general"]  .cat-icon svg { color: var(--purple); }
+    .cat-card[data-cat="fruits"]   .cat-icon svg { color: var(--accent); }
+    .cat-card[data-cat="vegetables"] .cat-icon svg { color: var(--orange); }
+    .cat-card[data-cat="pastry"]   .cat-icon svg { color: var(--yellow); }
+    .cat-card[data-cat="meat"]     .cat-icon svg { color: var(--orange); }
+    .cat-card[data-cat="camera"]   .cat-icon svg { color: var(--teal); }
+
+    /* ── Scanner area (shown when camera tab active) ── */
+    .scanner-area {
+      display: none;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .scanner-area.visible { display: flex; }
+
+    /* mode tabs */
+    .mode-tabs {
+      display: flex;
+      gap: 0;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+    }
+    .mode-tab {
+      flex: 1; padding: 9px;
+      background: transparent; border: none;
+      color: var(--muted); font-family: var(--font);
+      font-size: 0.82rem; font-weight: 700;
+      cursor: pointer; display: flex; align-items: center;
+      justify-content: center; gap: 6px;
+      transition: background 0.15s, color 0.15s;
+    }
+    .mode-tab:first-child { border-right: 1.5px solid var(--border); }
+    .mode-tab.active { background: var(--card); color: var(--text); }
+
+    .img-zone {
+      position: relative;
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      aspect-ratio: 16/9;
+      overflow: hidden;
+      background: var(--card);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .img-zone.upload-mode { cursor: pointer; }
+    .img-zone.upload-mode:hover { border-color: var(--accent); }
+
+    .upload-label {
+      width: 100%; height: 100%;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 8px; cursor: pointer;
+    }
+    .upload-label p { color: var(--muted); font-size: 0.85rem; }
+    .upload-label small { color: var(--faint); font-size: 0.72rem; }
+    #fileInput { display: none; }
+
+    /* camera */
+    #videoEl { width: 100%; height: 100%; object-fit: cover; display: block; }
+    #snapCanvas { display: none; }
+    .cam-frame { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
+    .cam-frame::before,.cam-frame::after,.cam-frame span::before,.cam-frame span::after {
+      content:'';position:absolute;width:20px;height:20px;
+      border-color:var(--accent);border-style:solid;opacity:0.9;
+    }
+    .cam-frame::before{top:8px;left:8px;border-width:2px 0 0 2px}
+    .cam-frame::after{top:8px;right:8px;border-width:2px 2px 0 0}
+    .cam-frame span::before{bottom:8px;left:8px;border-width:0 0 2px 2px}
+    .cam-frame span::after{bottom:8px;right:8px;border-width:0 2px 2px 0}
+    .live-badge {
+      position:absolute;top:8px;left:50%;transform:translateX(-50%);
+      background:rgba(0,0,0,0.55);border:1px solid rgba(255,255,255,0.12);
+      border-radius:20px;padding:3px 10px;font-family:var(--font);
+      font-size:0.62rem;font-weight:700;color:#fff;
+      display:flex;align-items:center;gap:5px;z-index:5;letter-spacing:1px;
+    }
+    .live-dot{width:6px;height:6px;border-radius:50%;background:var(--red);animation:blink 1.2s infinite}
+    @keyframes blink{0%,100%{opacity:1}50%{opacity:0.2}}
+    .flash-overlay{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:10;transition:opacity 0.06s}
+    .flash-overlay.flash{opacity:0.8;transition:none}
+
+    .img-zone img.snap { position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1; }
+    .snap-overlay { position:absolute;inset:0;background:linear-gradient(to top,rgba(0,0,0,0.6) 0%,transparent 55%);z-index:2;pointer-events:none }
+    .snap-label { position:absolute;bottom:10px;left:12px;font-family:var(--font);font-size:0.7rem;color:rgba(255,255,255,0.7);z-index:3 }
+    .snap-change-hint {
+      position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+      gap:6px;background:rgba(13,15,28,0.55);opacity:0;z-index:4;
+      transition:opacity 0.2s;pointer-events:none;backdrop-filter:blur(2px);
+    }
+    .snap-change-hint svg { color: #fff; }
+    .snap-change-hint span { font-size:0.8rem;font-weight:700;color:#fff;letter-spacing:0.2px; }
+    .img-zone.upload-mode:hover .snap-change-hint { opacity: 1; }
+
+    .cam-actions { display: flex; gap: 8px; }
+    .btn-shutter {
+      flex: 1; background: var(--accent); color: #fff;
+      border: none; border-radius: var(--radius-sm); padding: 10px;
+      font-family: var(--font); font-size: 0.88rem; font-weight: 800;
+      cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 7px;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .btn-shutter:hover { background: var(--accent-h); }
+    .btn-shutter:active { transform: scale(0.97); }
+    .btn-retake {
+      background: transparent; color: var(--muted);
+      border: 1.5px solid var(--border); border-radius: var(--radius-sm);
+      padding: 10px 14px; font-family: var(--font); font-size: 0.85rem; font-weight: 700;
+      cursor: pointer; white-space: nowrap;
+      transition: border-color 0.2s, color 0.2s;
+    }
+    .btn-retake:hover { border-color: var(--muted); color: var(--text); }
+
+    /* predictions */
+    #predictionPanel { display: none; }
+    .pred-section-label {
+      font-size: 0.68rem; font-family: var(--font); font-weight: 800;
+      letter-spacing: 1.8px; text-transform: uppercase; color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .unknown-banner {
+      background: rgba(247,110,110,0.08);
+      border: 1.5px dashed rgba(247,110,110,0.4);
+      border-radius: var(--radius-sm); padding: 12px 14px;
+      display: flex; align-items: flex-start; gap: 10px; margin-bottom: 8px;
+    }
+    .unknown-banner .ub-icon { font-size: 1.4rem; line-height: 1; flex-shrink: 0; }
+    .unknown-banner .ub-title { font-size: 0.85rem; font-weight: 800; color: var(--red); }
+    .unknown-banner .ub-sub { font-size: 0.72rem; color: var(--muted); margin-top: 2px; line-height: 1.45; }
+    .pred-list { display: flex; flex-direction: column; gap: 4px; }
+    .pred-item {
+      display: flex; align-items: center; gap: 9px;
+      padding: 8px 12px; border-radius: var(--radius-sm);
+      border: 1.5px solid var(--border); background: var(--card);
+      cursor: pointer; position: relative; overflow: hidden;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .pred-item::before {
+      content:'';position:absolute;left:0;top:0;bottom:0;
+      width:var(--bar,0%);background:rgba(79,110,247,0.07);transition:width 0.35s ease;
+    }
+    .pred-item:hover { border-color: var(--accent); }
+    .pred-item.selected { border-color: var(--accent); background: rgba(79,110,247,0.1); }
+    .pred-item.top1 { border-color: rgba(79,110,247,0.4); }
+    #predictionPanel.is-unknown .pred-item { opacity: 0.65; }
+    #predictionPanel.is-unknown .pred-item:hover,
+    #predictionPanel.is-unknown .pred-item.selected { opacity: 1; }
+    .pred-rank { font-size: 0.65rem; font-weight: 800; color: var(--muted); width: 16px; flex-shrink: 0; }
+    .pred-item.selected .pred-rank, .pred-item.top1 .pred-rank { color: var(--accent); }
+    .pred-name { flex: 1; font-size: 0.8rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pred-cat { font-size: 0.65rem; color: var(--muted); font-family: var(--font-body); }
+    .pred-conf { font-size: 0.75rem; font-weight: 700; color: var(--accent); flex-shrink: 0; font-family: var(--font-body); }
+    .pred-check {
+      width: 15px; height: 15px; border-radius: 50%;
+      border: 2px solid var(--border); flex-shrink: 0;
+      display: grid; place-items: center;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .pred-item.selected .pred-check, .pred-item.top1 .pred-check { border-color: var(--accent); background: var(--accent); }
+    .pred-check::after { content:''; width:5px; height:5px; border-radius:50%; background:#fff; opacity:0; }
+    .pred-item.selected .pred-check::after, .pred-item.top1 .pred-check::after { opacity: 1; }
+    .best-badge {
+      font-size: 0.55rem; background: var(--accent); color: #fff;
+      padding: 2px 5px; border-radius: 3px; font-weight: 900; letter-spacing: 0.8px; flex-shrink: 0;
+    }
+
+    .scan-btn {
+      width: 100%; background: var(--accent); color: #fff;
+      border: none; border-radius: var(--radius-sm); padding: 12px;
+      font-family: var(--font); font-size: 0.95rem; font-weight: 800;
+      cursor: pointer; letter-spacing: 0.2px;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .scan-btn:hover { background: var(--accent-h); }
+    .scan-btn:active { transform: scale(0.98); }
+    .scan-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .status-bar {
+      display: flex; align-items: center; gap: 7px;
+      font-family: var(--font-body); font-size: 0.72rem; color: var(--muted);
+      min-height: 20px;
+    }
+    .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+    .status-dot.processing { background: var(--accent); animation: blink 0.9s infinite; }
+    .status-dot.success { background: var(--green); }
+    .status-dot.error { background: var(--red); }
+
+    /* ══════════════════════════════════════
+       RIGHT PANEL  — Checkout
+    ══════════════════════════════════════ */
+    .right {
+      background: var(--bg);
+      display: flex; flex-direction: column;
+      padding: 28px 24px 24px;
+      gap: 0;
+    }
+
+    .checkout-title {
+      font-size: 1.45rem; font-weight: 900;
+      letter-spacing: -0.5px; margin-bottom: 20px;
+    }
+
+    /* table header */
+    .cart-header {
+      display: flex; justify-content: space-between;
+      padding-bottom: 10px;
+      border-bottom: 1.5px solid var(--border);
+      font-family: var(--font-body);
+      font-size: 0.78rem; font-weight: 700; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.8px;
+    }
+
+    /* items list */
+    .cart-items {
+      flex: 1; overflow-y: auto;
+      margin: 0 -4px; padding: 0 4px;
+    }
+    .cart-items::-webkit-scrollbar { width: 3px; }
+    .cart-items::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .cart-empty {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      height: 180px; gap: 10px; opacity: 0.35; text-align: center;
+    }
+    .cart-empty svg { opacity: 0.6; }
+    .cart-empty p { font-size: 0.85rem; color: var(--muted); }
+
+    .cart-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 13px 0;
+      border-bottom: 1px solid var(--border);
+      animation: fadeUp 0.2s ease both;
+    }
+    .cart-row-remove {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 2px 5px;
+      border-radius: var(--radius-sm);
+      font-size: 1rem;
+      line-height: 1;
+      transition: color 0.15s, background 0.15s;
+      flex-shrink: 0;
+      align-self: center;
+      margin-left: 6px;
+    }
+    .cart-row-remove:hover {
+      color: var(--red);
+      background: rgba(247, 110, 110, 0.1);
+    }
+    @keyframes fadeUp { from{opacity:0;transform:translateY(5px)} to{opacity:1;transform:translateY(0)} }
+    .cart-row-name { font-size: 0.88rem; font-weight: 700; }
+    .cart-row-qty { font-size: 0.75rem; color: var(--muted); font-family: var(--font-body); margin-top: 3px; }
+    .cart-row-unit { font-size: 0.72rem; color: var(--muted); font-family: var(--font-body); margin-top: 1px; }
+    .cart-row-price { font-size: 0.92rem; font-weight: 800; color: var(--accent); flex-shrink: 0; }
+
+    /* coupon + total */
+    .cart-footer {
+      margin-top: 16px;
+      border-top: 1.5px solid var(--border);
+      padding-top: 14px;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .coupon-row {
+      display: flex; justify-content: space-between;
+      font-size: 0.82rem; color: var(--muted); font-family: var(--font-body);
+    }
+    .total-row {
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .total-label { font-size: 1rem; font-weight: 900; }
+    .total-amount { font-size: 1.3rem; font-weight: 900; color: var(--text); }
+
+    /* checkout button */
+    .checkout-btn {
+      margin-top: 18px; width: 100%;
+      background: var(--accent); color: #fff;
+      border: none; border-radius: var(--radius);
+      padding: 15px; font-family: var(--font);
+      font-size: 1rem; font-weight: 900; letter-spacing: 0.3px;
+      cursor: pointer; transition: background 0.2s, transform 0.1s;
+    }
+    .checkout-btn:hover { background: var(--accent-h); }
+    .checkout-btn:active { transform: scale(0.98); }
+    .checkout-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .action-row {
+      display: flex; gap: 8px; margin-top: 8px;
+    }
+    .btn-outline {
+      flex: 1; background: transparent; color: var(--muted);
+      border: 1.5px solid var(--border); border-radius: var(--radius-sm);
+      padding: 9px; font-family: var(--font); font-size: 0.8rem; font-weight: 700;
+      cursor: pointer; transition: border-color 0.2s, color 0.2s, background 0.2s;
+    }
+    .btn-outline:hover { border-color: var(--muted); color: var(--text); background: var(--card); }
+
+    /* ── Category view content ── */
+    .cat-products {
+      display: none; flex-direction: column; gap: 8px;
+    }
+    .cat-products.visible { display: flex; }
+    .product-item {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px;
+      background: var(--card); border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm); cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .product-item:hover { border-color: var(--accent); background: var(--card-h); }
+    .product-name { font-size: 0.85rem; font-weight: 700; }
+    .product-price { font-size: 0.82rem; font-weight: 800; color: var(--accent); }
+
+    /* ── Settings Panel ── */
+    .settings-panel { display: none; flex-direction: column; gap: 16px; flex: 1; }
+    .settings-panel.visible { display: flex; }
+    .settings-title {
+      font-size: 1.1rem; font-weight: 900; letter-spacing: -0.3px;
+    }
+    .settings-section {
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .settings-section-header {
+      font-size: 0.72rem; font-weight: 800; text-transform: uppercase;
+      letter-spacing: 1.5px; color: var(--muted);
+    }
+    .regen-card {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 14px 16px; background: var(--card); border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm);
+    }
+    .regen-card-info { display: flex; flex-direction: column; gap: 2px; }
+    .regen-card-title { font-size: 0.85rem; font-weight: 700; }
+    .regen-card-sub { font-size: 0.68rem; color: var(--muted); font-family: var(--font-body); }
+    .model-select-wrap {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 14px 16px; background: var(--card); border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm);
+    }
+    .model-select-wrap label {
+      font-size: 0.85rem; font-weight: 700; white-space: nowrap;
+    }
+    .model-select {
+      flex: 1; background: var(--bg); border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm); padding: 8px 12px;
+      font-family: var(--font-body); font-size: 0.82rem; color: var(--text);
+      outline: none; cursor: pointer; appearance: none;
+      -webkit-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238891b8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      padding-right: 28px;
+    }
+    .model-select:focus { border-color: var(--accent); }
+    .model-select option { background: var(--panel); color: var(--text); }
+    .precision-toggle {
+      display: inline-flex; gap: 4px; margin-left: 6px;
+    }
+    .precision-btn {
+      padding: 2px 11px; border: 1.5px solid var(--border);
+      border-radius: 4px; background: transparent; color: var(--muted);
+      cursor: pointer; font-size: 0.78rem; font-weight: 700;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .precision-btn:hover:not(.active):not(:disabled) { border-color: var(--accent); color: var(--accent); }
+    .precision-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .precision-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .label-toolbar { display: flex; gap: 8px; }
+    .label-toolbar input {
+      flex: 1; background: var(--card); border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm); padding: 9px 14px;
+      font-family: var(--font-body); font-size: 0.85rem; color: var(--text); outline: none;
+    }
+    .label-toolbar input::placeholder { color: var(--muted); }
+    .label-toolbar input:focus { border-color: var(--accent); }
+    .label-toolbar button {
+      background: var(--accent); color: #fff; border: none;
+      border-radius: var(--radius-sm); padding: 9px 16px;
+      font-family: var(--font); font-size: 0.82rem; font-weight: 700;
+      cursor: pointer; white-space: nowrap; transition: background 0.2s;
+    }
+    .label-toolbar button:hover { background: var(--accent-h); }
+    .label-toolbar button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .label-format-hint {
+      font-size: 0.68rem; color: var(--muted); font-family: var(--font-body);
+      margin-top: -4px; line-height: 1.4;
+    }
+    .label-format-hint code {
+      background: var(--card); padding: 1px 5px; border-radius: 3px;
+      font-size: 0.66rem; color: var(--accent);
+    }
+    .label-input-error {
+      font-size: 0.7rem; color: var(--red); font-family: var(--font-body);
+      min-height: 16px;
+    }
+    .label-search {
+      position: relative;
+    }
+    .label-search input {
+      width: 100%; background: var(--card); border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm); padding: 9px 14px;
+      font-family: var(--font-body); font-size: 0.85rem; color: var(--text); outline: none;
+    }
+    .label-search input::placeholder { color: var(--muted); }
+    .label-search input:focus { border-color: var(--accent); }
+    .label-list-container {
+      flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 3px;
+      max-height: 380px;
+    }
+    .label-list-container::-webkit-scrollbar { width: 3px; }
+    .label-list-container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    .label-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px; border-radius: var(--radius-sm);
+      border: 1.5px solid var(--border); background: var(--card);
+      transition: border-color 0.15s, background 0.15s;
+      animation: fadeUp 0.15s ease both;
+    }
+    .label-row:hover { border-color: var(--accent); background: var(--card-h); }
+    .label-row-text {
+      flex: 1; font-size: 0.82rem; font-weight: 600; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    .label-row-cat {
+      font-size: 0.65rem; color: var(--muted); font-family: var(--font-body);
+    }
+    .label-row-actions { display: flex; gap: 4px; flex-shrink: 0; }
+    .label-row-actions button {
+      background: transparent; border: 1.5px solid var(--border);
+      border-radius: 6px; padding: 4px 8px; cursor: pointer;
+      font-size: 0.72rem; font-weight: 700; font-family: var(--font);
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
+    }
+    .label-btn-edit { color: var(--accent); }
+    .label-btn-edit:hover { border-color: var(--accent); background: rgba(79,110,247,0.1); }
+    .label-btn-del { color: var(--red); }
+    .label-btn-del:hover { border-color: var(--red); background: rgba(247,110,110,0.1); }
+    .label-count { font-size: 0.72rem; color: var(--muted); font-family: var(--font-body); }
+    .label-changed-banner {
+      display: none; align-items: center; gap: 8px;
+      padding: 8px 12px; background: rgba(247,201,110,0.08);
+      border: 1.5px dashed rgba(247,201,110,0.35); border-radius: var(--radius-sm);
+      font-size: 0.75rem; color: var(--yellow); font-weight: 700;
+    }
+    .label-changed-banner.visible { display: flex; }
+    .btn-regen {
+      background: var(--green); color: #12141c; border: none;
+      border-radius: var(--radius-sm); padding: 8px 16px;
+      font-family: var(--font); font-size: 0.82rem; font-weight: 800;
+      cursor: pointer; white-space: nowrap; transition: opacity 0.2s;
+    }
+    .btn-regen:hover { opacity: 0.85; }
+    .btn-regen:disabled { opacity: 0.4; cursor: not-allowed; }
+    .regen-progress { display: none; flex-direction: column; gap: 6px; }
+    .regen-progress.visible { display: flex; }
+    .regen-progress-header {
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .regen-progress-label {
+      font-size: 0.78rem; font-weight: 700; color: var(--text);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 65%;
+    }
+    .regen-progress-pct {
+      font-size: 0.78rem; font-weight: 800; color: var(--green);
+      font-family: var(--font-body); flex-shrink: 0;
+    }
+    .regen-progress-track {
+      width: 100%; height: 8px; background: var(--card);
+      border-radius: 4px; overflow: hidden; border: 1px solid var(--border);
+    }
+    .regen-progress-fill {
+      height: 100%; width: 0%; background: var(--green);
+      border-radius: 4px; transition: width 0.25s ease;
+    }
+    .regen-progress-sub {
+      font-size: 0.68rem; color: var(--muted); font-family: var(--font-body);
+    }
+    .label-status {
+      font-size: 0.75rem; color: var(--muted); font-family: var(--font-body);
+      min-height: 18px;
+    }
+    .label-status.error { color: var(--red); }
+    .label-status.success { color: var(--green); }
+    .label-row-price {
+      font-size: 0.72rem; font-weight: 800; color: var(--green);
+      font-family: var(--font-body); flex-shrink: 0; cursor: pointer;
+      padding: 2px 6px; border-radius: 4px;
+      transition: background 0.15s, color 0.15s;
+    }
+    .label-row-price:hover { background: rgba(62,207,142,0.12); }
+    .label-row-price.no-price {
+      color: var(--muted); font-weight: 600; font-style: italic;
+    }
+    /* edit price modal */
+    .edit-price-overlay {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+      z-index: 101; align-items: center; justify-content: center;
+    }
+    .edit-price-overlay.visible { display: flex; }
+    .edit-price-dialog {
+      background: var(--panel); border: 1.5px solid var(--border);
+      border-radius: var(--radius); padding: 24px; width: 380px; max-width: 90vw;
+    }
+    .edit-price-dialog h3 { font-size: 1rem; font-weight: 800; margin-bottom: 6px; }
+    .edit-price-dialog .ep-product { font-size: 0.85rem; color: var(--muted); margin-bottom: 14px; }
+    .edit-price-dialog input {
+      width: 100%; background: var(--card); border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm); padding: 10px 14px;
+      font-family: var(--font-body); font-size: 0.9rem; color: var(--text); outline: none;
+      margin-bottom: 14px;
+    }
+    .edit-price-dialog input:focus { border-color: var(--accent); }
+    .edit-price-dialog .ep-error {
+      font-size: 0.7rem; color: var(--red); font-family: var(--font-body);
+      min-height: 16px; margin-bottom: 8px;
+    }
+    .edit-price-dialog-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .edit-price-dialog-actions button {
+      padding: 8px 18px; border-radius: var(--radius-sm);
+      font-family: var(--font); font-size: 0.85rem; font-weight: 700; cursor: pointer;
+    }
+
+    /* edit modal overlay */
+    .edit-overlay {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+      z-index: 100; align-items: center; justify-content: center;
+    }
+    .edit-overlay.visible { display: flex; }
+    .edit-dialog {
+      background: var(--panel); border: 1.5px solid var(--border);
+      border-radius: var(--radius); padding: 24px; width: 400px; max-width: 90vw;
+    }
+    .edit-dialog h3 { font-size: 1rem; font-weight: 800; margin-bottom: 14px; }
+    .edit-dialog input {
+      width: 100%; background: var(--card); border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm); padding: 10px 14px;
+      font-family: var(--font-body); font-size: 0.9rem; color: var(--text); outline: none;
+      margin-bottom: 14px;
+    }
+    .edit-dialog input:focus { border-color: var(--accent); }
+    .edit-dialog-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .edit-dialog-actions button {
+      padding: 8px 18px; border-radius: var(--radius-sm);
+      font-family: var(--font); font-size: 0.85rem; font-weight: 700; cursor: pointer;
+    }
+    .edit-cancel { background: transparent; border: 1.5px solid var(--border); color: var(--muted); }
+    .edit-cancel:hover { border-color: var(--muted); color: var(--text); }
+    .edit-save { background: var(--accent); border: none; color: #fff; }
+    .edit-save:hover { background: var(--accent-h); }
+
+    /* responsive */
+    @media(max-width:720px) {
+      .app { grid-template-columns: 1fr; }
+      .right { border-top: 1px solid var(--border); }
+      .category-grid { grid-template-columns: repeat(2,1fr); }
+    }
+
+    /* slide-in for predictions */
+    @keyframes slideIn { from{opacity:0;transform:translateY(5px)} to{opacity:1;transform:translateY(0)} }
+    .pred-item { animation: slideIn 0.2s ease both; }
+    .pred-item:nth-child(1){animation-delay:0s}
+    .pred-item:nth-child(2){animation-delay:0.04s}
+    .pred-item:nth-child(3){animation-delay:0.08s}
+    .pred-item:nth-child(4){animation-delay:0.12s}
+    .pred-item:nth-child(5){animation-delay:0.16s}
+  </style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ══════════════════════════════════════
+       LEFT PANEL
+  ══════════════════════════════════════ -->
+  <div class="left">
+
+    <!-- Top bar -->
+    <div class="topbar">
+      <div class="app-title">
+        <div class="icon-badge">🛒</div>
+        Automatic Vision-based Checkout
+      </div>
+      <div class="topbar-actions">
+        <button class="settings-btn" id="settingsBtn" title="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+        <button class="info-btn" title="About">i</button>
+      </div>
+    </div>
+
+    <!-- Search -->
+    <div class="search-wrap">
+      <input class="search-input" type="text" placeholder="Search product…" id="searchInput"/>
+      <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+    </div>
+
+    <!-- Category grid (default view) -->
+    <div class="category-grid" id="categoryGrid">
+
+      <div class="cat-card" data-cat="general">
+        <span class="cat-label">General</span>
+        <div class="cat-icon">
+          <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="22" cy="54" r="4"/><circle cx="46" cy="54" r="4"/>
+            <path d="M6 8h8l6 28h24l6-18H18"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="cat-card" data-cat="fruits">
+        <span class="cat-label">Fruits</span>
+        <div class="cat-icon">
+          <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="22" cy="30" r="8"/><circle cx="36" cy="26" r="8"/>
+            <circle cx="42" cy="38" r="8"/><circle cx="28" cy="42" r="8"/>
+            <circle cx="15" cy="42" r="8"/>
+            <path d="M32 16 Q34 8 40 6"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="cat-card" data-cat="vegetables">
+        <span class="cat-label">Vegetables</span>
+        <div class="cat-icon">
+          <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M32 56 Q20 42 20 30a12 12 0 0 1 24 0Q44 42 32 56z"/>
+            <path d="M32 30 Q24 22 14 24"/><path d="M32 36 Q40 28 50 30"/>
+            <path d="M32 56 L32 44"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="cat-card" data-cat="pastry">
+        <span class="cat-label">Pastry</span>
+        <div class="cat-icon">
+          <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 40 Q12 26 32 26 Q52 26 52 40"/>
+            <line x1="8" y1="40" x2="56" y2="40"/><line x1="12" y1="46" x2="52" y2="46"/>
+            <path d="M24 26 Q24 18 28 14"/><path d="M32 26 Q32 16 32 12"/><path d="M40 26 Q40 18 36 14"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="cat-card" data-cat="meat">
+        <span class="cat-label">Meat</span>
+        <div class="cat-icon">
+          <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M40 12 a14 14 0 0 1 12 12 a10 10 0 0 1-14 14 L20 50 a8 8 0 0 1-8-8 L30 24 a10 10 0 0 1 10-12z"/>
+            <circle cx="46" cy="18" r="3"/>
+          </svg>
+        </div>
+      </div>
+
+      <!-- Camera / Vision scan card -->
+      <div class="cat-card" data-cat="camera" id="cameraCatCard">
+        <span class="cat-label">Vision Scan</span>
+        <div class="cat-icon">
+          <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="8" y="18" width="48" height="34" rx="6"/>
+            <circle cx="32" cy="35" r="10"/>
+            <circle cx="32" cy="35" r="5"/>
+            <path d="M22 18 L26 10 H38 L42 18"/>
+            <circle cx="50" cy="26" r="2" fill="currentColor"/>
+          </svg>
+        </div>
+      </div>
+
+    </div><!-- /category-grid -->
+
+    <!-- Scanner area (replaces grid when Vision Scan active) -->
+    <div class="scanner-area" id="scannerArea">
+
+      <!-- Back button -->
+      <button class="btn-outline" id="backToGrid" style="width:auto;padding:7px 14px;align-self:flex-start;display:flex;align-items:center;gap:6px;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+        Back
+      </button>
+
+      <!-- Mode tabs -->
+      <div class="mode-tabs">
+        <button class="mode-tab active" id="tabUpload">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          Upload
+        </button>
+        <button class="mode-tab" id="tabCamera">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          Camera
+        </button>
+      </div>
+
+      <!-- Image / Camera zone -->
+      <div class="img-zone upload-mode" id="imgZone">
+        <div id="uploadContent" style="width:100%;height:100%;display:flex">
+          <label class="upload-label" for="fileInput" id="uploadLabel" onclick="fileInput.value=''">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#4f6ef7" stroke-width="1.5">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            <p>Drop image or click to upload</p>
+            <small>JPG · PNG · WEBP — max 16 MB</small>
+          </label>
+        </div>
+        <input type="file" id="fileInput" accept="image/*"/>
+
+        <div id="cameraContent" style="display:none;width:100%;height:100%;position:relative">
+          <video id="videoEl" autoplay playsinline muted></video>
+          <canvas id="snapCanvas"></canvas>
+          <div class="cam-frame" id="camFrame" style="display:none"><span></span></div>
+          <div class="live-badge" id="liveBadge" style="display:none">
+            <div class="live-dot"></div>LIVE
+          </div>
+          <div class="flash-overlay" id="flashOverlay"></div>
+        </div>
+      </div>
+
+      <!-- Camera controls -->
+      <div class="cam-actions" id="camControls" style="display:none">
+        <button class="btn-shutter" id="shutterBtn">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4" fill="currentColor" stroke="none"/></svg>
+          Capture
+        </button>
+        <button class="btn-retake" id="retakeBtn" style="display:none">↺ Retake</button>
+      </div>
+
+      <!-- Predictions -->
+      <div id="predictionPanel">
+        <div id="unknownBanner" class="unknown-banner" style="display:none">
+          <div class="ub-icon">❓</div>
+          <div>
+            <div class="ub-title">Unknown Product</div>
+            <div class="ub-sub">Confidence too low — not added to cart.<br>Select a match below to add manually.</div>
+          </div>
+        </div>
+        <div class="pred-section-label" id="predSectionLabel">Detection Results</div>
+        <div class="pred-list" id="predList"></div>
+      </div>
+
+      <button class="scan-btn" id="scanBtn">Scan Product</button>
+
+      <div class="status-bar">
+        <div class="status-dot" id="statusDot"></div>
+        <span id="statusText">Ready to scan</span>
+        <span style="margin-left:auto;font-size:0.75rem;color:var(--text-muted)">Device: <span id="scanDeviceBadge" style="font-weight:600;color:var(--accent)">—</span></span>
+      </div>
+
+    </div><!-- /scanner-area -->
+
+    <!-- ── Settings Panel ── -->
+    <div class="settings-panel" id="settingsPanel">
+      <button class="btn-outline" id="backFromSettings" style="width:auto;padding:7px 14px;align-self:flex-start;display:flex;align-items:center;gap:6px;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+        Back
+      </button>
+
+      <div class="settings-title">Settings</div>
+
+      <!-- Model section -->
+      <div class="settings-section">
+        <div class="settings-section-header">Model</div>
+        <div class="model-select-wrap">
+          <label for="modelSelect">CLIP Model</label>
+          <select class="model-select" id="modelSelect"></select>
+        </div>
+        <div style="margin-top:6px;font-size:0.78rem;color:var(--text-muted)">Inference device: <span id="ovDeviceBadge" style="font-weight:600;color:var(--accent)">—</span></div>
+        <div style="margin-top:4px;font-size:0.78rem;color:var(--text-muted)">
+          Precision:
+          <span class="precision-toggle">
+            <button class="precision-btn" id="precisionFP16Btn" data-precision="FP16">FP16</button>
+            <button class="precision-btn" id="precisionINT8Btn" data-precision="INT8">INT8</button>
+          </span>
+        </div>
+        <div class="regen-card">
+          <div class="regen-card-info">
+            <div class="regen-card-title">Label Embeddings</div>
+            <div class="regen-card-sub">Regenerate clip_zeroshot_cls.pth from current labels</div>
+          </div>
+          <button class="btn-regen" id="regenBtn">Regenerate</button>
+        </div>
+        <div class="regen-progress" id="regenProgress">
+          <div class="regen-progress-header">
+            <span class="regen-progress-label" id="regenProgressLabel">Initialising…</span>
+            <span class="regen-progress-pct" id="regenProgressPct">0%</span>
+          </div>
+          <div class="regen-progress-track">
+            <div class="regen-progress-fill" id="regenProgressFill"></div>
+          </div>
+          <div class="regen-progress-sub" id="regenProgressSub">0 / 0 labels encoded</div>
+        </div>
+      </div>
+
+      <!-- Edit price modal -->
+      <div class="edit-price-overlay" id="editPriceOverlay">
+        <div class="edit-price-dialog">
+          <h3>Edit Price</h3>
+          <div class="ep-product" id="editPriceProduct"></div>
+          <input type="number" id="editPriceInput" step="0.01" min="0" placeholder="New price (RM)"/>
+          <div class="ep-error" id="editPriceError"></div>
+          <div class="edit-price-dialog-actions">
+            <button class="edit-cancel" id="editPriceCancelBtn">Cancel</button>
+            <button class="edit-save" id="editPriceSaveBtn">Save</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Label management section -->
+      <div class="settings-section" style="flex:1;display:flex;flex-direction:column">
+        <div class="settings-section-header">Product Labels</div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <span class="label-count" id="labelCount"></span>
+        </div>
+
+        <div class="label-changed-banner" id="labelChangedBanner">
+          ⚠ Labels changed — regenerate embeddings to apply.
+        </div>
+
+        <div class="label-toolbar">
+          <input type="text" id="newLabelInput" placeholder="e.g. Fruit/Apple/Fuji"
+                 title="Format: Category/SubCategory/Name — use letters, numbers, and hyphens separated by /"/>
+          <button id="addLabelBtn">+ Add</button>
+        </div>
+        <div class="label-format-hint">Format: <code>Category/Sub/Name</code> — letters, numbers &amp; hyphens, at least 2 segments</div>
+        <div class="label-input-error" id="labelInputError"></div>
+
+        <div class="label-search">
+          <input type="text" id="labelSearchInput" placeholder="Filter labels…"/>
+        </div>
+
+        <div class="label-list-container" id="labelListContainer"></div>
+      </div>
+
+      <div class="label-status" id="labelStatus"></div>
+    </div>
+
+    <!-- Edit label modal -->
+    <div class="edit-overlay" id="editOverlay">
+      <div class="edit-dialog">
+        <h3>Edit Label</h3>
+        <input type="text" id="editLabelInput"
+               title="Format: Category/SubCategory/Name — use letters, numbers, and hyphens separated by /"/>
+        <div class="label-format-hint" style="margin-bottom:10px">Format: <code>Category/Sub/Name</code> — letters, numbers &amp; hyphens, at least 2 segments</div>
+        <div class="label-input-error" id="editLabelError"></div>
+        <div class="edit-dialog-actions">
+          <button class="edit-cancel" id="editCancelBtn">Cancel</button>
+          <button class="edit-save" id="editSaveBtn">Save</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /left -->
+
+  <!-- ══════════════════════════════════════
+       RIGHT PANEL
+  ══════════════════════════════════════ -->
+  <div class="right">
+    <div class="checkout-title">Checkout</div>
+
+    <div class="cart-header">
+      <span>Name</span>
+      <span>Price</span>
+      <span></span>
+    </div>
+
+    <div class="cart-items" id="cartItems">
+      <div class="cart-empty" id="cartEmpty">
+        <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4">
+          <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/>
+          <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
+        </svg>
+        <p>No items scanned yet</p>
+      </div>
+      <div id="cartRowContainer"></div>
+    </div>
+
+    <div class="cart-footer">
+      <div class="coupon-row">
+        <span>SST (6%)</span><span id="sstAmount">RM 0.00</span>
+      </div>
+      <div class="total-row">
+        <span class="total-label">Total</span>
+        <span class="total-amount" id="totalAmount">RM 0.00</span>
+      </div>
+    </div>
+
+    <button class="checkout-btn" id="payBtn" disabled>Checkout</button>
+
+    <div class="action-row">
+      <button class="btn-outline" id="downloadBtn" disabled>⬇ Receipt</button>
+      <button class="btn-outline" id="clearBtn">Clear</button>
+    </div>
+  </div>
+
+</div><!-- /app -->
+
+<script>
+// ════════════════════════════════════════════
+// State
+// ════════════════════════════════════════════
+let cart = [], lastTop5 = [], selectedIdx = 0, isUnknown = false;
+let selectedFile = null, snappedBlob = null, cameraStream = null;
+let inputMode = 'upload'; // 'upload' | 'camera'
+
+// ════════════════════════════════════════════
+// DOM
+// ════════════════════════════════════════════
+const categoryGrid    = document.getElementById('categoryGrid');
+const scannerArea     = document.getElementById('scannerArea');
+const settingsPanel   = document.getElementById('settingsPanel');
+const cameraCatCard   = document.getElementById('cameraCatCard');
+const backToGrid      = document.getElementById('backToGrid');
+const tabUpload       = document.getElementById('tabUpload');
+const tabCamera       = document.getElementById('tabCamera');
+const imgZone         = document.getElementById('imgZone');
+const uploadContent   = document.getElementById('uploadContent');
+const cameraContent   = document.getElementById('cameraContent');
+const fileInput       = document.getElementById('fileInput');
+const uploadLabel     = document.getElementById('uploadLabel');
+const videoEl         = document.getElementById('videoEl');
+const snapCanvas      = document.getElementById('snapCanvas');
+const camFrame        = document.getElementById('camFrame');
+const liveBadge       = document.getElementById('liveBadge');
+const flashOverlay    = document.getElementById('flashOverlay');
+const camControls     = document.getElementById('camControls');
+const shutterBtn      = document.getElementById('shutterBtn');
+const retakeBtn       = document.getElementById('retakeBtn');
+const predictionPanel = document.getElementById('predictionPanel');
+const predList        = document.getElementById('predList');
+const unknownBanner   = document.getElementById('unknownBanner');
+const predSectionLabel= document.getElementById('predSectionLabel');
+const scanBtn         = document.getElementById('scanBtn');
+const statusDot       = document.getElementById('statusDot');
+const statusText      = document.getElementById('statusText');
+const cartItems       = document.getElementById('cartItems');
+const cartEmpty       = document.getElementById('cartEmpty');
+const cartRowContainer= document.getElementById('cartRowContainer');
+const totalAmount     = document.getElementById('totalAmount');
+const sstAmount       = document.getElementById('sstAmount');
+const SST_RATE        = 0.06;
+const payBtn          = document.getElementById('payBtn');
+const downloadBtn     = document.getElementById('downloadBtn');
+const clearBtn        = document.getElementById('clearBtn');
+
+// ════════════════════════════════════════════
+// Category card clicks
+// ════════════════════════════════════════════
+document.querySelectorAll('.cat-card').forEach(card => {
+  card.addEventListener('click', () => {
+    if (card.dataset.cat === 'camera') {
+      openScanner();
+    } else {
+      document.querySelectorAll('.cat-card').forEach(c => c.classList.remove('active'));
+      card.classList.add('active');
+      // Could implement category browsing here
+    }
+  });
+});
+
+function openScanner() {
+  settingsPanel.classList.remove('visible');
+  cameraCatCard.classList.add('active');
+  categoryGrid.style.display = 'none';
+  document.querySelector('.search-wrap').style.display = 'none';
+  scannerArea.classList.add('visible');
+  setStatus('', 'Ready to scan');
+  fetchModels();
+  // If already in camera mode but the stream was killed (e.g. after visiting Settings), restart it
+  if (inputMode === 'camera' && !cameraStream) {
+    startCamera();
+  }
+}
+
+backToGrid.addEventListener('click', () => {
+  stopCamera();
+  scannerArea.classList.remove('visible');
+  categoryGrid.style.display = '';
+  document.querySelector('.search-wrap').style.display = '';
+  cameraCatCard.classList.remove('active');
+  predictionPanel.style.display = 'none';
+  predList.innerHTML = '';
+  selectedFile = null; snappedBlob = null;
+  removeSnapPreview(); restoreUploadContent();
+});
+
+// ════════════════════════════════════════════
+// Input mode switching (Upload / Camera)
+// ════════════════════════════════════════════
+tabUpload.addEventListener('click', () => switchInputMode('upload'));
+tabCamera.addEventListener('click', () => switchInputMode('camera'));
+
+async function switchInputMode(m) {
+  if (inputMode === m) return;
+  inputMode = m;
+  tabUpload.classList.toggle('active', m === 'upload');
+  tabCamera.classList.toggle('active', m === 'camera');
+  imgZone.classList.toggle('upload-mode', m === 'upload');
+
+  if (m === 'upload') {
+    stopCamera();
+    uploadContent.style.display = '';
+    cameraContent.style.display = 'none';
+    camControls.style.display = 'none';
+    if (!selectedFile) restoreUploadContent();
+    setStatus('', 'Ready to scan');
+  } else {
+    uploadContent.style.display = 'none';
+    cameraContent.style.display = '';
+    camControls.style.display = 'flex';
+    retakeBtn.style.display = 'none';
+    removeSnapPreview();
+    await startCamera();
+  }
+}
+
+// ════════════════════════════════════════════
+// Camera
+// ════════════════════════════════════════════
+async function startCamera() {
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode:'environment', width:{ideal:1280}, height:{ideal:960} }, audio: false
+    });
+    videoEl.srcObject = cameraStream;
+    videoEl.style.display = 'block';
+    camFrame.style.display = 'block';
+    liveBadge.style.display = 'flex';
+    setStatus('success', 'Camera ready — point at product');
+  } catch (err) {
+    setStatus('error', 'Camera error: ' + err.message);
+  }
+}
+
+function stopCamera() {
+  if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
+  videoEl.srcObject = null;
+  camFrame.style.display = 'none';
+  liveBadge.style.display = 'none';
+}
+
+shutterBtn.addEventListener('click', () => {
+  if (!cameraStream) return;
+  flashOverlay.classList.add('flash');
+  setTimeout(() => flashOverlay.classList.remove('flash'), 120);
+
+  const vw = videoEl.videoWidth || 640, vh = videoEl.videoHeight || 480;
+  snapCanvas.width = vw; snapCanvas.height = vh;
+  snapCanvas.getContext('2d').drawImage(videoEl, 0, 0, vw, vh);
+
+  snapCanvas.toBlob(blob => {
+    snappedBlob = blob;
+    const url = URL.createObjectURL(blob);
+    showSnapPreview(url, 'Camera snapshot');
+    videoEl.style.display = 'none';
+    camFrame.style.display = 'none';
+    liveBadge.style.display = 'none';
+    retakeBtn.style.display = '';
+    setStatus('success', 'Snapshot taken — press Scan');
+  }, 'image/jpeg', 0.92);
+});
+
+retakeBtn.addEventListener('click', () => {
+  snappedBlob = null;
+  retakeBtn.style.display = 'none';
+  removeSnapPreview();
+  videoEl.style.display = 'block';
+  camFrame.style.display = 'block';
+  liveBadge.style.display = 'flex';
+  predictionPanel.style.display = 'none';
+  predList.innerHTML = '';
+  setStatus('success', 'Camera ready — point at product');
+});
+
+// ════════════════════════════════════════════
+// Upload
+// ════════════════════════════════════════════
+fileInput.addEventListener('change', () => {
+  selectedFile = fileInput.files[0];
+  if (selectedFile) {
+    const r = new FileReader();
+    r.onload = e => showSnapPreview(e.target.result, selectedFile.name);
+    r.readAsDataURL(selectedFile);
+  }
+});
+
+// Clicking anywhere on the zone in upload mode opens the file picker,
+// even after a preview is already shown (re-upload).
+imgZone.addEventListener('click', e => {
+  if (inputMode !== 'upload') return;
+  // Don't double-fire if the click came from the label itself
+  if (e.target.closest('label')) return;
+  fileInput.value = '';   // reset so same file re-triggers 'change'
+  fileInput.click();
+});
+imgZone.addEventListener('dragover', e => { e.preventDefault(); if (inputMode==='upload') imgZone.classList.add('dragover'); });
+imgZone.addEventListener('dragleave', () => imgZone.classList.remove('dragover'));
+imgZone.addEventListener('drop', e => {
+  e.preventDefault(); imgZone.classList.remove('dragover');
+  if (inputMode !== 'upload') return;
+  const f = e.dataTransfer.files[0];
+  if (f && f.type.startsWith('image/')) {
+    selectedFile = f;
+    const r = new FileReader();
+    r.onload = ev => showSnapPreview(ev.target.result, f.name);
+    r.readAsDataURL(f);
+  }
+});
+
+// ════════════════════════════════════════════
+// Preview helpers
+// ════════════════════════════════════════════
+function showSnapPreview(src, label) {
+  removeSnapPreview();
+  const img  = document.createElement('img');  img.className  = 'snap';             img.src = src;
+  const ov   = document.createElement('div');  ov.className   = 'snap-overlay';
+  const lbl  = document.createElement('span'); lbl.className  = 'snap-label';       lbl.textContent = label;
+  const hint = document.createElement('div');  hint.className = 'snap-change-hint';
+  hint.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg><span>Click to change image</span>`;
+  imgZone.appendChild(img); imgZone.appendChild(ov); imgZone.appendChild(lbl); imgZone.appendChild(hint);
+  if (uploadLabel) uploadLabel.style.visibility = 'hidden';
+}
+function removeSnapPreview() {
+  imgZone.querySelectorAll('.snap,.snap-overlay,.snap-label,.snap-change-hint').forEach(el => el.remove());
+  if (uploadLabel) uploadLabel.style.visibility = '';
+}
+function restoreUploadContent() {
+  selectedFile = null;
+  removeSnapPreview();
+}
+
+// ════════════════════════════════════════════
+// Status
+// ════════════════════════════════════════════
+function setStatus(state, msg) {
+  statusDot.className = 'status-dot ' + (state || '');
+  statusText.textContent = msg;
+}
+
+// ════════════════════════════════════════════
+// Scan
+// ════════════════════════════════════════════
+scanBtn.addEventListener('click', async () => {
+  let src = null;
+  if (inputMode === 'upload') {
+    if (!selectedFile) { setStatus('error', 'Please upload an image first'); return; }
+    src = selectedFile;
+  } else {
+    if (!snappedBlob) { setStatus('error', 'Please capture a snapshot first'); return; }
+    src = new File([snappedBlob], 'snapshot.jpg', { type: 'image/jpeg' });
+  }
+
+  scanBtn.disabled = true;
+  setStatus('processing', 'Analysing image…');
+  predictionPanel.style.display = 'none';
+  predList.innerHTML = '';
+
+  const fd = new FormData(); fd.append('image', src);
+  try {
+    const res  = await fetch('/upload', { method:'POST', body:fd });
+    const data = await res.json();
+    if (data.error) { setStatus('error', data.error); return; }
+
+    lastTop5 = data.top5 || []; selectedIdx = 0; isUnknown = data.is_unknown || false;
+    renderPredictions(lastTop5, isUnknown);
+    predictionPanel.style.display = 'block';
+
+    if (isUnknown) {
+      setStatus('error', `Low confidence (${data.top5[0].confidence.toFixed(1)}% < ${data.threshold}%)`);
+    } else if (data.bill_item) {
+      addToCart(data.bill_item);
+      setStatus('success', 'Added: ' + data.bill_item.Product);
+    } else {
+      setStatus('error', 'Product not in price database');
+    }
+  } catch (err) {
+    setStatus('error', err.message);
+  } finally {
+    scanBtn.disabled = false;
+  }
+});
+
+// ════════════════════════════════════════════
+// Predictions
+// ════════════════════════════════════════════
+function renderPredictions(top5, unknown) {
+  predList.innerHTML = '';
+  unknownBanner.style.display = unknown ? 'flex' : 'none';
+  predSectionLabel.textContent = unknown ? 'Closest Matches' : 'Detection Results';
+  predictionPanel.classList.toggle('is-unknown', unknown);
+
+  const maxConf = top5[0]?.confidence || 1;
+  top5.forEach((pred, i) => {
+    const parts = pred.label.split('/');
+    const name  = parts[parts.length - 1].replace(/-/g, ' ');
+    const cat   = parts.slice(0, -1).join(' › ');
+    const bar   = Math.round((pred.confidence / maxConf) * 100);
+
+    const el = document.createElement('div');
+    el.className = 'pred-item' + (!unknown && i === 0 ? ' top1 selected' : '');
+    el.style.setProperty('--bar', bar + '%');
+    el.innerHTML = `
+      <span class="pred-rank">#${i+1}</span>
+      <div style="flex:1;min-width:0">
+        <div class="pred-name">${name}</div>
+        <div class="pred-cat">${cat}</div>
+      </div>
+      ${!unknown && i===0 ? '<span class="best-badge">BEST</span>' : ''}
+      <span class="pred-conf">${pred.confidence.toFixed(1)}%</span>
+      <div class="pred-check"></div>`;
+    el.addEventListener('click', () => selectPrediction(i));
+    predList.appendChild(el);
+  });
+}
+
+async function selectPrediction(idx) {
+  if (!isUnknown && idx === selectedIdx) return;
+  const pred = lastTop5[idx];
+  setStatus('processing', 'Selecting ' + pred.short_name + '…');
+  try {
+    const res  = await fetch('/confirm_product', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ short_name: pred.short_name })
+    });
+    const data = await res.json();
+    if (data.error) { setStatus('error', data.error); return; }
+    if (!isUnknown && lastTop5[selectedIdx]) removeLastScannedItem(lastTop5[selectedIdx].short_name);
+    isUnknown = false; selectedIdx = idx;
+    addToCart(data.bill_item);
+    setStatus('success', 'Added: ' + data.bill_item.Product);
+    unknownBanner.style.display = 'none';
+    predSectionLabel.textContent = 'Detection Results';
+    predictionPanel.classList.remove('is-unknown');
+    document.querySelectorAll('.pred-item').forEach((el, i) => {
+      el.classList.toggle('selected', i === idx);
+      el.classList.toggle('top1', i === idx);
+    });
+  } catch (err) { setStatus('error', err.message); }
+}
+
+// ════════════════════════════════════════════
+// Cart
+// ════════════════════════════════════════════
+function addToCart(item) {
+  const ex = cart.find(c => c.Product === item.Product);
+  if (ex) { ex.Quantity += 1; ex.Total = ex.Quantity * ex.Unit_Price; }
+  else     { cart.push({ ...item, Quantity: 1, Total: item.Unit_Price }); }
+  renderCart();
+}
+
+function removeLastScannedItem(shortName) {
+  const idx = cart.findIndex(c => c.Product === shortName);
+  if (idx === -1) return;
+  if (cart[idx].Quantity > 1) { cart[idx].Quantity -= 1; cart[idx].Total = cart[idx].Quantity * cart[idx].Unit_Price; }
+  else cart.splice(idx, 1);
+  renderCart();
+}
+
+function renderCart() {
+  const empty = cart.length === 0;
+  cartEmpty.style.display = empty ? '' : 'none';
+
+  let total = 0;
+  cartRowContainer.innerHTML = cart.map(item => {
+    total += item.Total;
+    return `<div class="cart-row">
+      <div>
+        <div class="cart-row-name">${item.Product.replace(/-/g,' ')}</div>
+        <div class="cart-row-qty">Quantity: ${item.Quantity}</div>
+        <div class="cart-row-unit">RM ${item.Unit_Price.toFixed(2)} / unit</div>
+      </div>
+      <div class="cart-row-price">RM ${item.Total.toFixed(2)}</div>
+      <button class="cart-row-remove" data-product="${item.Product}" title="Remove one">✕</button>
+    </div>`;
+  }).join('');
+
+  // Attach remove listeners
+  cartRowContainer.querySelectorAll('.cart-row-remove').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const i = cart.findIndex(c => c.Product === btn.dataset.product);
+      if (i === -1) return;
+      if (cart[i].Quantity > 1) {
+        cart[i].Quantity -= 1;
+        cart[i].Total = cart[i].Quantity * cart[i].Unit_Price;
+      } else {
+        cart.splice(i, 1);
+      }
+      renderCart();
+    });
+  });
+
+  const sst        = total * SST_RATE;
+  const grandTotal = total + sst;
+  sstAmount.textContent   = `RM ${sst.toFixed(2)}`;
+  totalAmount.textContent = `RM ${grandTotal.toFixed(2)}`;
+  payBtn.disabled     = empty;
+  downloadBtn.disabled = empty;
+}
+
+clearBtn.addEventListener('click', () => {
+  cart = []; lastTop5 = []; selectedIdx = 0; isUnknown = false;
+  predictionPanel.style.display = 'none';
+  sstAmount.textContent = 'RM 0.00';
+  renderCart();
+  setStatus('', 'Cart cleared');
+});
+
+payBtn.addEventListener('click', () => {
+  const subtotal   = cart.reduce((s, i) => s + i.Total, 0);
+  const grandTotal = subtotal * (1 + SST_RATE);
+  window.location.href = `/payment?amount=${grandTotal.toFixed(2)}`;
+});
+
+downloadBtn.addEventListener('click', async () => {
+  const subtotal   = cart.reduce((s, i) => s + i.Total, 0);
+  const sst        = subtotal * SST_RATE;
+  const grandTotal = subtotal + sst;
+  const items      = cart.reduce((s, i) => s + i.Quantity, 0);
+  const res = await fetch('/download_bill', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ bill: cart, subtotal, sst, total_price: grandTotal, total_items: items })
+  });
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'receipt.pdf'; a.click();
+  URL.revokeObjectURL(url);
+});
+
+window.addEventListener('beforeunload', stopCamera);
+
+// ════════════════════════════════════════════
+// Settings & Label Management
+// ════════════════════════════════════════════
+const settingsBtn        = document.getElementById('settingsBtn');
+const backFromSettings   = document.getElementById('backFromSettings');
+const newLabelInput      = document.getElementById('newLabelInput');
+const addLabelBtn        = document.getElementById('addLabelBtn');
+const labelSearchInput   = document.getElementById('labelSearchInput');
+const labelListContainer = document.getElementById('labelListContainer');
+const labelCount         = document.getElementById('labelCount');
+const labelChangedBanner = document.getElementById('labelChangedBanner');
+const regenBtn           = document.getElementById('regenBtn');
+const modelSelect        = document.getElementById('modelSelect');
+const labelStatusEl      = document.getElementById('labelStatus');
+const editOverlay        = document.getElementById('editOverlay');
+const editLabelInput     = document.getElementById('editLabelInput');
+const editCancelBtn      = document.getElementById('editCancelBtn');
+const editSaveBtn        = document.getElementById('editSaveBtn');
+
+let allLabels = [];
+let labelsChanged = false;
+let editingLabel = null;
+
+settingsBtn.addEventListener('click', () => {
+  // Hide other panels
+  scannerArea.classList.remove('visible');
+  stopCamera();
+  categoryGrid.style.display = 'none';
+  document.querySelector('.search-wrap').style.display = 'none';
+  settingsPanel.classList.add('visible');
+  fetchLabels();
+  fetchModels();
+  fetchPrices();
+});
+
+backFromSettings.addEventListener('click', () => {
+  settingsPanel.classList.remove('visible');
+  categoryGrid.style.display = '';
+  document.querySelector('.search-wrap').style.display = '';
+  document.querySelectorAll('.cat-card').forEach(c => c.classList.remove('active'));
+});
+
+async function fetchLabels() {
+  try {
+    const res = await fetch('/labels');
+    const data = await res.json();
+    allLabels = data.labels || [];
+    renderLabelList();
+  } catch (err) {
+    setLabelStatus('error', 'Failed to load labels: ' + err.message);
+  }
+}
+
+function renderLabelList() {
+  const filter = labelSearchInput.value.toLowerCase();
+  const filtered = allLabels.filter(l => l.toLowerCase().includes(filter));
+  labelCount.textContent = `${filtered.length} / ${allLabels.length} labels`;
+
+  labelListContainer.innerHTML = filtered.map(label => {
+    const parts = label.split('/');
+    const shortName = parts[parts.length - 1];
+    const name = shortName.replace(/-/g, ' ');
+    const cat = parts.slice(0, -1).join(' › ');
+    const priceEntry = allProducts.find(p => p.product === shortName);
+    const priceHtml = priceEntry
+      ? `<span class="label-row-price" data-short="${shortName}" title="Click to edit price">RM ${priceEntry.price.toFixed(2)}</span>`
+      : `<span class="label-row-price no-price" data-short="${shortName}" title="Click to set price">no price</span>`;
+    return `<div class="label-row" data-label="${label.replace(/"/g, '&quot;')}">
+      <div style="flex:1;min-width:0">
+        <div class="label-row-text">${name}</div>
+        <div class="label-row-cat">${cat}</div>
+      </div>
+      ${priceHtml}
+      <div class="label-row-actions">
+        <button class="label-btn-edit" data-action="edit">✎</button>
+        <button class="label-btn-del" data-action="delete">✕</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  labelListContainer.querySelectorAll('.label-btn-edit').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const label = btn.closest('.label-row').dataset.label;
+      openEditDialog(label);
+    });
+  });
+
+  labelListContainer.querySelectorAll('.label-btn-del').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      const label = btn.closest('.label-row').dataset.label;
+      await deleteLabel(label);
+    });
+  });
+
+  labelListContainer.querySelectorAll('.label-row-price').forEach(el => {
+    el.addEventListener('click', e => {
+      e.stopPropagation();
+      const shortName = el.dataset.short;
+      const priceEntry = allProducts.find(p => p.product === shortName);
+      openEditPriceDialog(shortName, priceEntry ? priceEntry.price : 0);
+    });
+  });
+}
+
+labelSearchInput.addEventListener('input', renderLabelList);
+
+addLabelBtn.addEventListener('click', async () => {
+  const label = newLabelInput.value.trim();
+  const inputErr = document.getElementById('labelInputError');
+  inputErr.textContent = '';
+  if (!label) return;
+  const vErr = validateLabel(label);
+  if (vErr) { inputErr.textContent = vErr; return; }
+  addLabelBtn.disabled = true;
+  setLabelStatus('', 'Adding label…');
+  try {
+    const res = await fetch('/labels', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({label})
+    });
+    const data = await res.json();
+    if (data.error) { setLabelStatus('error', data.error); return; }
+    allLabels = data.labels;
+    newLabelInput.value = '';
+    labelsChanged = true;
+    labelChangedBanner.classList.add('visible');
+    renderLabelList();
+    setLabelStatus('success', `Added: ${label}`);
+  } catch (err) {
+    setLabelStatus('error', err.message);
+  } finally {
+    addLabelBtn.disabled = false;
+  }
+});
+
+newLabelInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') addLabelBtn.click();
+});
+
+async function deleteLabel(label) {
+  setLabelStatus('', 'Deleting…');
+  try {
+    const res = await fetch('/labels', {
+      method: 'DELETE',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({label})
+    });
+    const data = await res.json();
+    if (data.error) { setLabelStatus('error', data.error); return; }
+    allLabels = data.labels;
+    labelsChanged = true;
+    labelChangedBanner.classList.add('visible');
+    renderLabelList();
+    setLabelStatus('success', `Deleted: ${label}`);
+  } catch (err) {
+    setLabelStatus('error', err.message);
+  }
+}
+
+function openEditDialog(label) {
+  editingLabel = label;
+  editLabelInput.value = label;
+  editOverlay.classList.add('visible');
+  editLabelInput.focus();
+}
+
+editCancelBtn.addEventListener('click', () => {
+  editOverlay.classList.remove('visible');
+  editingLabel = null;
+});
+
+editOverlay.addEventListener('click', e => {
+  if (e.target === editOverlay) {
+    editOverlay.classList.remove('visible');
+    editingLabel = null;
+  }
+});
+
+editSaveBtn.addEventListener('click', async () => {
+  const newLabel = editLabelInput.value.trim();
+  const editErr = document.getElementById('editLabelError');
+  editErr.textContent = '';
+  if (!newLabel || !editingLabel) return;
+  if (newLabel === editingLabel) { editOverlay.classList.remove('visible'); return; }
+  const vErr = validateLabel(newLabel);
+  if (vErr) { editErr.textContent = vErr; return; }
+  setLabelStatus('', 'Saving…');
+  try {
+    const res = await fetch('/labels', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({old_label: editingLabel, new_label: newLabel})
+    });
+    const data = await res.json();
+    if (data.error) { setLabelStatus('error', data.error); return; }
+    allLabels = data.labels;
+    labelsChanged = true;
+    labelChangedBanner.classList.add('visible');
+    renderLabelList();
+    setLabelStatus('success', `Renamed to: ${newLabel}`);
+  } catch (err) {
+    setLabelStatus('error', err.message);
+  } finally {
+    editOverlay.classList.remove('visible');
+    editingLabel = null;
+  }
+});
+
+editLabelInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') editSaveBtn.click();
+});
+
+regenBtn.addEventListener('click', () => {
+  regenBtn.disabled = true;
+  const progressEl    = document.getElementById('regenProgress');
+  const progressLabel = document.getElementById('regenProgressLabel');
+  const progressPct   = document.getElementById('regenProgressPct');
+  const progressFill  = document.getElementById('regenProgressFill');
+  const progressSub   = document.getElementById('regenProgressSub');
+
+  progressEl.classList.add('visible');
+  progressLabel.textContent = 'Loading model…';
+  progressPct.textContent = '0%';
+  progressFill.style.width = '0%';
+  progressSub.textContent = '0 / ? labels encoded';
+  setLabelStatus('', '');
+
+  const evtSource = new EventSource('/labels/regenerate_stream');
+
+  evtSource.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+
+    if (data.error) {
+      evtSource.close();
+      progressEl.classList.remove('visible');
+      regenBtn.disabled = false;
+      setLabelStatus('error', data.error);
+      return;
+    }
+
+    if (data.done) {
+      evtSource.close();
+      progressFill.style.width = '100%';
+      progressPct.textContent = '100%';
+      progressLabel.textContent = 'Complete!';
+      labelsChanged = false;
+      labelChangedBanner.classList.remove('visible');
+      setTimeout(() => {
+        progressEl.classList.remove('visible');
+        regenBtn.disabled = false;
+        setLabelStatus('success', 'Weights regenerated successfully!');
+      }, 600);
+      return;
+    }
+
+    // Progress update
+    const pct = Math.round((data.current / data.total) * 100);
+    const shortName = data.label.split('/').pop().replace(/-/g, ' ');
+    progressFill.style.width = pct + '%';
+    progressPct.textContent = pct + '%';
+    progressLabel.textContent = shortName;
+    progressSub.textContent = `${data.current} / ${data.total} labels encoded`;
+  };
+
+  evtSource.onerror = () => {
+    evtSource.close();
+    progressEl.classList.remove('visible');
+    regenBtn.disabled = false;
+    setLabelStatus('error', 'Connection lost during regeneration');
+  };
+});
+
+function setLabelStatus(type, msg) {
+  labelStatusEl.className = 'label-status' + (type ? ' ' + type : '');
+  labelStatusEl.textContent = msg;
+}
+
+const _LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9-]*(\/[A-Za-z0-9][A-Za-z0-9-]*)+$/;
+function validateLabel(label) {
+  if (!label) return 'Label is required.';
+  if (!_LABEL_RE.test(label))
+    return 'Invalid format. Use Category/Sub/Name with letters, numbers & hyphens (e.g. Fruit/Apple/Fuji).';
+  return null;
+}
+
+// ════════════════════════════════════════════
+// Price Management (inline in label rows)
+// ════════════════════════════════════════════
+const editPriceOverlay    = document.getElementById('editPriceOverlay');
+const editPriceInput      = document.getElementById('editPriceInput');
+const editPriceProduct    = document.getElementById('editPriceProduct');
+const editPriceError      = document.getElementById('editPriceError');
+const editPriceCancelBtn  = document.getElementById('editPriceCancelBtn');
+const editPriceSaveBtn    = document.getElementById('editPriceSaveBtn');
+
+let allProducts = [];
+let editingProduct = null;
+
+async function fetchPrices() {
+  try {
+    const res = await fetch('/prices');
+    const data = await res.json();
+    allProducts = data.products || [];
+    renderLabelList();
+  } catch (err) {
+    setLabelStatus('error', 'Failed to load prices: ' + err.message);
+  }
+}
+
+function openEditPriceDialog(product, currentPrice) {
+  editingProduct = product;
+  editPriceProduct.textContent = product.replace(/_/g, ' ').replace(/-/g, ' ');
+  editPriceInput.value = currentPrice;
+  editPriceError.textContent = '';
+  editPriceOverlay.classList.add('visible');
+  editPriceInput.focus();
+  editPriceInput.select();
+}
+
+editPriceCancelBtn.addEventListener('click', () => {
+  editPriceOverlay.classList.remove('visible');
+  editingProduct = null;
+});
+
+editPriceOverlay.addEventListener('click', e => {
+  if (e.target === editPriceOverlay) {
+    editPriceOverlay.classList.remove('visible');
+    editingProduct = null;
+  }
+});
+
+editPriceSaveBtn.addEventListener('click', async () => {
+  if (!editingProduct) return;
+  editPriceError.textContent = '';
+  const val = parseFloat(editPriceInput.value);
+  if (isNaN(val) || val < 0) {
+    editPriceError.textContent = 'Please enter a valid non-negative price.';
+    return;
+  }
+  try {
+    const existing = allProducts.some(p => p.product === editingProduct);
+    const method = existing ? 'PUT' : 'POST';
+    const res = await fetch('/prices', {
+      method,
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ product: editingProduct, price: val })
+    });
+    const data = await res.json();
+    if (data.error) {
+      editPriceError.textContent = data.error;
+      return;
+    }
+    // Update local cache
+    const idx = allProducts.findIndex(p => p.product === editingProduct);
+    if (idx !== -1) allProducts[idx].price = data.price;
+    else allProducts.push({ product: data.product, price: data.price });
+    renderLabelList();
+    editPriceOverlay.classList.remove('visible');
+    editingProduct = null;
+    const verb = existing ? 'updated' : 'added';
+    setLabelStatus('success', `Price ${verb}: ${data.product} → RM ${data.price.toFixed(2)}`);
+  } catch (err) {
+    editPriceError.textContent = err.message;
+  }
+});
+
+editPriceInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') editPriceSaveBtn.click();
+});
+
+// ════════════════════════════════════════════
+// Model Selection
+// ════════════════════════════════════════════
+let currentModelKey = '';
+
+async function fetchModels() {
+  try {
+    const res = await fetch('/model');
+    const data = await res.json();
+    modelSelect.innerHTML = '';
+    (data.models || []).forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.key;
+      opt.textContent = m.display_name;
+      if (m.active) { opt.selected = true; currentModelKey = m.key; }
+      modelSelect.appendChild(opt);
+    });
+    const badge = document.getElementById('ovDeviceBadge');
+    if (badge && data.ov_device) badge.textContent = data.ov_device;
+    const scanBadge = document.getElementById('scanDeviceBadge');
+    if (scanBadge && data.ov_device) scanBadge.textContent = data.ov_device;
+    // Sync precision toggle
+    if (data.precision) {
+      document.getElementById('precisionFP16Btn').classList.toggle('active', data.precision === 'FP16');
+      document.getElementById('precisionINT8Btn').classList.toggle('active', data.precision === 'INT8');
+    }
+  } catch (err) {
+    setLabelStatus('error', 'Failed to load models: ' + err.message);
+  }
+}
+
+modelSelect.addEventListener('change', () => {
+  const newKey = modelSelect.value;
+  if (newKey === currentModelKey) return;
+
+  modelSelect.disabled = true;
+  regenBtn.disabled = true;
+
+  const progressEl    = document.getElementById('regenProgress');
+  const progressLabel = document.getElementById('regenProgressLabel');
+  const progressPct   = document.getElementById('regenProgressPct');
+  const progressFill  = document.getElementById('regenProgressFill');
+  const progressSub   = document.getElementById('regenProgressSub');
+
+  progressEl.classList.add('visible');
+  progressLabel.textContent = 'Switching model…';
+  progressPct.textContent = '0%';
+  progressFill.style.width = '0%';
+  progressSub.textContent = 'Loading new model…';
+  setLabelStatus('', '');
+
+  const evtSource = new EventSource('/model/switch_stream?model=' + encodeURIComponent(newKey));
+
+  evtSource.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+
+    if (data.error) {
+      evtSource.close();
+      progressEl.classList.remove('visible');
+      modelSelect.value = currentModelKey;
+      modelSelect.disabled = false;
+      regenBtn.disabled = false;
+      setLabelStatus('error', data.error);
+      return;
+    }
+
+    if (data.done) {
+      evtSource.close();
+      progressFill.style.width = '100%';
+      progressPct.textContent = '100%';
+      progressLabel.textContent = 'Complete!';
+      currentModelKey = data.model;
+      labelsChanged = false;
+      labelChangedBanner.classList.remove('visible');
+      setTimeout(() => {
+        progressEl.classList.remove('visible');
+        modelSelect.disabled = false;
+        regenBtn.disabled = false;
+        setLabelStatus('success', 'Model switched & weights regenerated!');
+      }, 600);
+      return;
+    }
+
+    const pct = Math.round((data.current / data.total) * 100);
+    const shortName = data.label.split('/').pop().replace(/-/g, ' ');
+    progressFill.style.width = pct + '%';
+    progressPct.textContent = pct + '%';
+    progressLabel.textContent = shortName;
+    progressSub.textContent = `${data.current} / ${data.total} labels encoded`;
+  };
+
+  evtSource.onerror = () => {
+    evtSource.close();
+    progressEl.classList.remove('visible');
+    modelSelect.value = currentModelKey;
+    modelSelect.disabled = false;
+    regenBtn.disabled = false;
+    setLabelStatus('error', 'Connection lost during model switch');
+  };
+});
+
+// ════════════════════════════════════════════
+// Precision Toggle (FP16 / INT8)
+// ════════════════════════════════════════════
+function setPrecisionBtnsDisabled(disabled) {
+  document.getElementById('precisionFP16Btn').disabled = disabled;
+  document.getElementById('precisionINT8Btn').disabled = disabled;
+}
+
+[document.getElementById('precisionFP16Btn'), document.getElementById('precisionINT8Btn')].forEach(btn => {
+  btn.addEventListener('click', () => {
+    const precision = btn.dataset.precision;
+    if (btn.classList.contains('active')) return; // already active
+
+    const progressEl    = document.getElementById('regenProgress');
+    const progressLabel = document.getElementById('regenProgressLabel');
+    const progressPct   = document.getElementById('regenProgressPct');
+    const progressFill  = document.getElementById('regenProgressFill');
+    const progressSub   = document.getElementById('regenProgressSub');
+
+    setPrecisionBtnsDisabled(true);
+    modelSelect.disabled = true;
+    regenBtn.disabled = true;
+    progressEl.classList.add('visible');
+    progressLabel.textContent = `Switching to ${precision}…`;
+    progressPct.textContent = '';
+    progressFill.style.width = '0%';
+    progressSub.textContent = precision === 'INT8'
+      ? 'Exporting INT8 model (first time may take a few minutes)…'
+      : 'Loading FP16 model…';
+    setLabelStatus('', '');
+
+    const evtSource = new EventSource('/model/precision_stream?precision=' + encodeURIComponent(precision));
+
+    evtSource.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      evtSource.close();
+      setPrecisionBtnsDisabled(false);
+      modelSelect.disabled = false;
+      regenBtn.disabled = false;
+      progressEl.classList.remove('visible');
+
+      if (data.error) {
+        setLabelStatus('error', data.error);
+        return;
+      }
+      document.getElementById('precisionFP16Btn').classList.toggle('active', data.precision === 'FP16');
+      document.getElementById('precisionINT8Btn').classList.toggle('active', data.precision === 'INT8');
+      setLabelStatus('success', `Switched to ${data.precision} precision.`);
+    };
+
+    evtSource.onerror = () => {
+      evtSource.close();
+      setPrecisionBtnsDisabled(false);
+      modelSelect.disabled = false;
+      regenBtn.disabled = false;
+      progressEl.classList.remove('visible');
+      setLabelStatus('error', 'Connection lost during precision switch');
+    };
+  });
+});
+</script>
+</body>
+</html>

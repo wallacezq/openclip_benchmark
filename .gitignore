@@ -1,0 +1,15 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# OpenVINO exported models (large, regenerated on first run)
+DFN5B-CLIP-ViT-H-14-378-openclip/
+
+# Runtime uploads
+uploads/
+
+# Logs
+wget-log*
+*.log
