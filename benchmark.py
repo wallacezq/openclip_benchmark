@@ -229,6 +229,33 @@ def _load_ov_visual_model(model_dir: Path, requested_device: str):
         )
 
 
+def _load_npu_static_models(device: str = "NPU"):
+    """Load and compile the static shape image and text encoders for NPU.
+    
+    Returns (image_compiled, text_compiled) tuple.
+    """
+    import openvino as ov
+    
+    if not (OV_NPU_STATIC_DIR / "image_encoder.xml").exists():
+        raise FileNotFoundError(
+            f"NPU static models not found in {OV_NPU_STATIC_DIR}. "
+            "Run with --export-npu-static first."
+        )
+    
+    core = ov.Core()
+    ov_config = {"PERFORMANCE_HINT": "LATENCY"}
+    
+    logger.info("Loading image encoder for NPU …")
+    image_model = core.read_model(str(OV_NPU_STATIC_DIR / "image_encoder.xml"))
+    image_compiled = core.compile_model(image_model, device, ov_config)
+    
+    logger.info("Loading text encoder for NPU …")
+    text_model = core.read_model(str(OV_NPU_STATIC_DIR / "text_encoder.xml"))
+    text_compiled = core.compile_model(text_model, device, ov_config)
+    
+    return image_compiled, text_compiled
+
+
 def _parse_precision_mode(value: str) -> list[tuple[str, Path]]:
     """Map the CLI precision selector to the model directories to benchmark."""
     normalized = value.strip().lower()
@@ -510,6 +537,55 @@ def _run_single(
     return times, predictions
 
 
+def _run_single_npu(
+    img_array: np.ndarray,
+    processor,
+    ov_image_encoder,
+    ov_text_encoder,
+    tokenizer,
+    zeroshot_weights: torch.Tensor,
+    labels: list[str],
+) -> tuple[InferenceTimes, list[dict]]:
+    """Run one NPU inference pass with static shapes and return detailed timings + top-K predictions."""
+
+    # ── a. Preprocess ───────────────────────────────────────────────────
+    t0 = time.perf_counter()
+    img_inputs = processor(images=[img_array], return_tensors="pt")
+    img_np = img_inputs["pixel_values"].numpy().astype(np.float32)
+    t_preprocess = time.perf_counter() - t0
+
+    # ── b. Visual encoding (OV NPU static) ───────────────────────────────
+    t1 = time.perf_counter()
+    img_output = ov_image_encoder({"pixel_values": img_np})
+    image_features = torch.from_numpy(img_output[ov_image_encoder.outputs[0]])
+    t_visual = time.perf_counter() - t1
+
+    # ── c. Matching (logits + softmax + top-K) ──────────────────────────
+    t2 = time.perf_counter()
+    logits = 100.0 * image_features @ zeroshot_weights   # (1, N)
+    probs  = torch.softmax(logits, dim=-1).squeeze()      # (N,)
+    top_values, top_indices = probs.topk(TOP_K)
+    t_match = time.perf_counter() - t2
+
+    total = t_preprocess + t_visual + t_match
+    times = InferenceTimes(
+        preprocess_s=t_preprocess,
+        visual_enc_s=t_visual,
+        matching_s=t_match,
+        total_s=total,
+    )
+    predictions = [
+        {
+            "rank": rank + 1,
+            "label": labels[idx.item()],
+            "short_name": labels[idx.item()].split("/")[-1],
+            "confidence_pct": round(val.item() * 100, 4),
+        }
+        for rank, (val, idx) in enumerate(zip(top_values, top_indices))
+    ]
+    return times, predictions
+
+
 def phase_inference_benchmark(
     img_array: np.ndarray,
     processor,
@@ -558,6 +634,66 @@ def phase_inference_benchmark(
 
     result = {
         "precision": precision,
+        "runs": bench_runs,
+        "warmup_runs": warmup_runs,
+        "preprocess":  _stats([t.preprocess_s  for t in all_times]),
+        "visual_enc":  _stats([t.visual_enc_s  for t in all_times]),
+        "matching":    _stats([t.matching_s    for t in all_times]),
+        "total":       _stats([t.total_s       for t in all_times]),
+        "top_predictions": last_predictions,
+    }
+    return result
+
+
+def phase_inference_benchmark_npu(
+    img_array: np.ndarray,
+    processor,
+    ov_image_encoder,
+    ov_text_encoder,
+    tokenizer,
+    zeroshot_weights: torch.Tensor,
+    labels: list[str],
+    warmup_runs: int,
+    bench_runs: int,
+) -> dict:
+    """Benchmark NPU inference with static shapes. Returns timing statistics."""
+
+    _hr(f"Phase 3  │  Inference benchmark  [NPU static]  warmup={warmup_runs}  runs={bench_runs}")
+
+    # Warmup
+    logger.info("Running %d warmup iterations …", warmup_runs)
+    for _ in range(warmup_runs):
+        _run_single_npu(img_array, processor, ov_image_encoder, ov_text_encoder, tokenizer, zeroshot_weights, labels)
+
+    # Measured runs
+    logger.info("Running %d measured iterations …", bench_runs)
+    all_times: list[InferenceTimes] = []
+    last_predictions: list[dict] = []
+
+    for i in range(bench_runs):
+        t, preds = _run_single_npu(img_array, processor, ov_image_encoder, ov_text_encoder, tokenizer, zeroshot_weights, labels)
+        all_times.append(t)
+        last_predictions = preds
+        if (i + 1) % max(1, bench_runs // 5) == 0:
+            logger.info(
+                "  [%d/%d] pre=%.1fms  vis=%.1fms  match=%.2fms  total=%.1fms",
+                i + 1, bench_runs,
+                t.preprocess_s * 1000,
+                t.visual_enc_s * 1000,
+                t.matching_s   * 1000,
+                t.total_s      * 1000,
+            )
+
+    def _stats(vals: list[float]) -> dict:
+        return {
+            "mean_ms":   round(statistics.mean(vals) * 1000, 3),
+            "min_ms":    round(min(vals) * 1000, 3),
+            "max_ms":    round(max(vals) * 1000, 3),
+            "stdev_ms":  round(statistics.stdev(vals) * 1000, 3) if len(vals) > 1 else 0.0,
+        }
+
+    result = {
+        "precision": "NPU-static",
         "runs": bench_runs,
         "warmup_runs": warmup_runs,
         "preprocess":  _stats([t.preprocess_s  for t in all_times]),
@@ -691,6 +827,15 @@ def main() -> None:
     ov_device = _resolve_ov_device(args.device)
     logger.info("Using OpenVINO device: %s", ov_device)
 
+    # Check if user requested NPU and export static models if needed
+    if ov_device.upper() == "NPU":
+        if not (OV_NPU_STATIC_DIR / "image_encoder.xml").exists():
+            logger.info("NPU static models not found. Auto-exporting …")
+            export_timings = phase_export_npu_static_models()
+            all_results["export_npu_static"] = export_timings
+        else:
+            logger.info("Using cached NPU static models from %s", OV_NPU_STATIC_DIR)
+
     # ── Load labels ────────────────────────────────────────────────────────
     labels = _load_labels()
 
@@ -739,22 +884,44 @@ def main() -> None:
     # ── Phase 3: Inference benchmarks (selected precision(s)) ──────────────
     inference_results: list[dict] = []
 
-    for precision, model_dir in precision_plan:
-        logger.info("Loading OV visual model [%s] from %s on %s …", precision, model_dir, ov_device)
-        ov_vision = _load_ov_visual_model(model_dir, ov_device)
+    # Handle NPU separately (uses static models with separate encoders)
+    if ov_device.upper() == "NPU":
+        try:
+            ov_image_encoder, ov_text_encoder = _load_npu_static_models(ov_device)
+            
+            result = phase_inference_benchmark_npu(
+                img_array=img_array,
+                processor=processor,
+                ov_image_encoder=ov_image_encoder,
+                ov_text_encoder=ov_text_encoder,
+                tokenizer=tokenizer,
+                zeroshot_weights=zeroshot_weights,
+                labels=labels,
+                warmup_runs=args.warmup,
+                bench_runs=args.runs,
+            )
+            inference_results.append(result)
+        except FileNotFoundError as exc:
+            logger.error("NPU setup failed: %s", exc)
+            raise SystemExit(str(exc)) from exc
+    else:
+        # Regular GPU/CPU path with FP16/INT8
+        for precision, model_dir in precision_plan:
+            logger.info("Loading OV visual model [%s] from %s on %s …", precision, model_dir, ov_device)
+            ov_vision = _load_ov_visual_model(model_dir, ov_device)
 
-        result = phase_inference_benchmark(
-            img_array=img_array,
-            processor=processor,
-            ov_vision=ov_vision,
-            zeroshot_weights=zeroshot_weights,
-            labels=labels,
-            precision=precision,
-            warmup_runs=args.warmup,
-            bench_runs=args.runs,
-        )
-        inference_results.append(result)
-        del ov_vision  # free device memory before loading next precision
+            result = phase_inference_benchmark(
+                img_array=img_array,
+                processor=processor,
+                ov_vision=ov_vision,
+                zeroshot_weights=zeroshot_weights,
+                labels=labels,
+                precision=precision,
+                warmup_runs=args.warmup,
+                bench_runs=args.runs,
+            )
+            inference_results.append(result)
+            del ov_vision  # free device memory before loading next precision
 
     all_results["inference"] = inference_results
 
