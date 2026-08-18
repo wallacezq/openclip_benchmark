@@ -96,6 +96,14 @@ Run with a real sample image:
 python benchmark.py --image ./sample.jpg
 ```
 
+Export static shape models for NPU inference:
+
+```bash
+python benchmark.py --export-npu-static
+```
+
+This exports separate image and text encoder models with fixed input shapes (378×378 images, 77-token text context) required for Intel NPU compilation.
+
 ## Options
 
 ```bash
@@ -109,6 +117,7 @@ Available options:
 - `--warmup` : number of warmup runs before measuring
 - `--image` : path to an image; otherwise a synthetic test image is used
 - `--precision` : select `fp16`, `int8`, or `fp16+int8`
+- `--export-npu-static` : export static shape models for Intel NPU (separate image/text encoders with fixed shapes)
 - `--skip-export` : flag to skip model export when directories already exist
 
 ## Output
@@ -125,3 +134,14 @@ The report includes model details, export timings, label init timing, and per-pr
 - If GPU is unavailable, the benchmark falls back to CPU automatically.
 - The benchmark uses the sample class labels already defined in the repo under `labels.json`.
 - On some integrated GPUs, OpenVINO may fail during kernel compilation with `CL_OUT_OF_HOST_MEMORY`. The benchmark loader now retries on CPU in that case, and the `--device CPU` option is the most reliable fallback when the GPU compiler path is unstable.
+
+## NPU static shape export
+
+Intel NPU requires models with static (fixed) input shapes. The `--export-npu-static` option generates separate encoder models:
+
+- **Image encoder**: `image_encoder.xml` with static shape (1, 3, 378, 378)
+- **Text encoder**: `text_encoder.xml` with static shape (1, 77)
+
+Both models are saved to `DFN5B-CLIP-ViT-H-14-378-openclip-npu-static/` and can be compiled directly for Intel NPU using OpenVINO's NPU plugin.
+
+This approach follows the pattern from [wallacezq/zero-shot-image-classification-npu](https://github.com/wallacezq/zero-shot-image-classification-npu), which demonstrates NPU deployment with static shapes.

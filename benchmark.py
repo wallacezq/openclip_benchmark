@@ -112,6 +112,11 @@ OV_BASE_DIR       = Path("DFN5B-CLIP-ViT-H-14-378-openclip")
 OV_FP16_DIR       = OV_BASE_DIR / "FP16"
 OV_INT8_DIR       = OV_BASE_DIR / "INT8"
 RESULTS_PATH      = Path("benchmark_results.json")
+OV_NPU_STATIC_DIR = Path("DFN5B-CLIP-ViT-H-14-378-openclip-npu-static")
+
+# NPU static shape constants (must match export)
+NPU_IMAGE_SIZE    = 378
+NPU_CONTEXT_LENGTH = 77
 
 TOP_K = 5
 
@@ -234,6 +239,115 @@ def _parse_precision_mode(value: str) -> list[tuple[str, Path]]:
     if normalized in {"fp16+int8", "both"}:
         return [("FP16", OV_FP16_DIR), ("INT8", OV_INT8_DIR)]
     raise ValueError("precision must be one of: fp16, int8, fp16+int8")
+
+
+def phase_export_npu_static_models() -> dict[str, float]:
+    """Export image and text encoders to OpenVINO IR with static shapes for NPU.
+    
+    Exports both image and text encoders separately to enable batch=1 static shape
+    compilation on NPU hardware. Uses fixed input shapes:
+    - Image: (1, 3, 378, 378)
+    - Text:  (1, 77) token IDs
+    """
+    import openvino as ov
+    
+    _hr("Phase 1  │  Export static models for NPU")
+    
+    if OV_NPU_STATIC_DIR.exists():
+        logger.info("NPU static models already present — skipping export.")
+        return {
+            "npu_export_s": 0.0,
+            "npu_export_cached": True,
+        }
+    
+    OV_NPU_STATIC_DIR.mkdir(parents=True, exist_ok=True)
+    t0 = time.perf_counter()
+    
+    logger.info("Loading OpenCLIP model for static export …")
+    clip_model, _, _ = open_clip.create_model_and_transforms(
+        OPENCLIP_MODEL_ID, pretrained=PRETRAINED
+    )
+    clip_model.eval()
+    tokenizer = open_clip.get_tokenizer(OPENCLIP_MODEL_ID)
+    
+    # --- Export Image Encoder ---
+    logger.info("Exporting image encoder with static shape (1, 3, %d, %d) …", NPU_IMAGE_SIZE, NPU_IMAGE_SIZE)
+    
+    class ImageEncoder(torch.nn.Module):
+        def __init__(self, model):
+            super().__init__()
+            self.visual = model.visual
+        
+        def forward(self, pixel_values):
+            return self.visual(pixel_values)
+    
+    image_encoder = ImageEncoder(clip_model)
+    image_encoder.eval()
+    dummy_image = torch.randn(1, 3, NPU_IMAGE_SIZE, NPU_IMAGE_SIZE)
+    
+    with torch.no_grad():
+        ov_image_model = ov.convert_model(
+            image_encoder,
+            example_input=dummy_image,
+            input=[ov.PartialShape([1, 3, NPU_IMAGE_SIZE, NPU_IMAGE_SIZE])],
+        )
+    
+    # Rename inputs/outputs
+    ov_image_model.inputs[0].get_tensor().set_names({"pixel_values"})
+    ov_image_model.outputs[0].get_tensor().set_names({"image_features"})
+    
+    # Force static shape
+    ov_image_model.reshape({"pixel_values": [1, 3, NPU_IMAGE_SIZE, NPU_IMAGE_SIZE]})
+    ov_image_model.validate_nodes_and_infer_types()
+    
+    image_xml_path = OV_NPU_STATIC_DIR / "image_encoder.xml"
+    ov.save_model(ov_image_model, str(image_xml_path))
+    logger.info("Saved image encoder to %s", image_xml_path)
+    
+    # --- Export Text Encoder ---
+    logger.info("Exporting text encoder with static shape (1, %d) …", NPU_CONTEXT_LENGTH)
+    
+    class TextEncoder(torch.nn.Module):
+        def __init__(self, model):
+            super().__init__()
+            self.model = model
+        
+        def forward(self, input_ids):
+            return self.model.encode_text(input_ids)
+    
+    text_encoder = TextEncoder(clip_model)
+    text_encoder.eval()
+    dummy_text = torch.zeros(1, NPU_CONTEXT_LENGTH, dtype=torch.long)
+    
+    with torch.no_grad():
+        ov_text_model = ov.convert_model(
+            text_encoder,
+            example_input=dummy_text,
+            input=[ov.PartialShape([1, NPU_CONTEXT_LENGTH])],
+        )
+    
+    # Rename inputs/outputs
+    ov_text_model.inputs[0].get_tensor().set_names({"input_ids"})
+    ov_text_model.outputs[0].get_tensor().set_names({"text_features"})
+    
+    # Force static shape
+    ov_text_model.reshape({"input_ids": [1, NPU_CONTEXT_LENGTH]})
+    ov_text_model.validate_nodes_and_infer_types()
+    
+    text_xml_path = OV_NPU_STATIC_DIR / "text_encoder.xml"
+    ov.save_model(ov_text_model, str(text_xml_path))
+    logger.info("Saved text encoder to %s", text_xml_path)
+    
+    # Clean up
+    del clip_model, image_encoder, text_encoder, ov_image_model, ov_text_model
+    
+    elapsed = time.perf_counter() - t0
+    logger.info("NPU static model export completed in %.1f s", elapsed)
+    
+    return {
+        "npu_export_s": elapsed,
+        "npu_export_cached": False,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -541,6 +655,11 @@ def main() -> None:
         default="fp16+int8",
         help="Inference precision to run: fp16, int8, or fp16+int8 (default: fp16+int8)",
     )
+    parser.add_argument(
+        "--export-npu-static",
+        action="store_true",
+        help="Export static shape models for NPU (separate image/text encoders)",
+    )
     parser.add_argument("--skip-export", action="store_true",
                         help="Skip model export if OV directories already exist (implied automatically)")
     args = parser.parse_args()
@@ -557,7 +676,17 @@ def main() -> None:
     print(f"  Device : {args.device}  (auto-resolved)")
     print(f"  Precision mode : {args.precision}")
     print(f"  Runs   : {args.warmup} warmup + {args.runs} measured")
+    if args.export_npu_static:
+        print(f"  NPU static export: enabled")
     print("=" * 68)
+
+    # Early exit for NPU static export only
+    if args.export_npu_static:
+        logger.info("Running NPU static model export …")
+        export_timings = phase_export_npu_static_models()
+        logger.info("NPU export complete. Models are in: %s", OV_NPU_STATIC_DIR.resolve())
+        print(f"\n  NPU static models saved to: {OV_NPU_STATIC_DIR.resolve()}\n")
+        return
 
     ov_device = _resolve_ov_device(args.device)
     logger.info("Using OpenVINO device: %s", ov_device)
