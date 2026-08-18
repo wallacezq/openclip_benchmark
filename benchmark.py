@@ -112,7 +112,9 @@ OV_BASE_DIR       = Path("DFN5B-CLIP-ViT-H-14-378-openclip")
 OV_FP16_DIR       = OV_BASE_DIR / "FP16"
 OV_INT8_DIR       = OV_BASE_DIR / "INT8"
 RESULTS_PATH      = Path("benchmark_results.json")
-OV_NPU_STATIC_DIR = Path("DFN5B-CLIP-ViT-H-14-378-openclip-npu-static")
+OV_NPU_STATIC_BASE_DIR = Path("DFN5B-CLIP-ViT-H-14-378-openclip-npu-static")
+OV_NPU_STATIC_FP16_DIR = OV_NPU_STATIC_BASE_DIR / "FP16"
+OV_NPU_STATIC_INT8_DIR = OV_NPU_STATIC_BASE_DIR / "INT8"
 
 # NPU static shape constants (must match export)
 NPU_IMAGE_SIZE    = 378
@@ -229,28 +231,37 @@ def _load_ov_visual_model(model_dir: Path, requested_device: str):
         )
 
 
-def _load_npu_static_models(device: str = "NPU"):
+def _npu_static_dir_for_precision(precision: str) -> Path:
+    if precision == "FP16":
+        return OV_NPU_STATIC_FP16_DIR
+    if precision == "INT8":
+        return OV_NPU_STATIC_INT8_DIR
+    raise ValueError(f"Unsupported precision for NPU static model: {precision}")
+
+
+def _load_npu_static_models(precision: str, device: str = "NPU"):
     """Load and compile the static shape image and text encoders for NPU.
     
     Returns (image_compiled, text_compiled) tuple.
     """
     import openvino as ov
+    static_dir = _npu_static_dir_for_precision(precision)
     
-    if not (OV_NPU_STATIC_DIR / "image_encoder.xml").exists():
+    if not (static_dir / "image_encoder.xml").exists():
         raise FileNotFoundError(
-            f"NPU static models not found in {OV_NPU_STATIC_DIR}. "
-            "Run with --export-npu-static first."
+            f"NPU static models ({precision}) not found in {static_dir}. "
+            "Run with --export-npu-static and matching --precision first."
         )
     
     core = ov.Core()
     ov_config = {"PERFORMANCE_HINT": "LATENCY"}
     
-    logger.info("Loading image encoder for NPU …")
-    image_model = core.read_model(str(OV_NPU_STATIC_DIR / "image_encoder.xml"))
+    logger.info("Loading image encoder for NPU [%s] …", precision)
+    image_model = core.read_model(str(static_dir / "image_encoder.xml"))
     image_compiled = core.compile_model(image_model, device, ov_config)
     
-    logger.info("Loading text encoder for NPU …")
-    text_model = core.read_model(str(OV_NPU_STATIC_DIR / "text_encoder.xml"))
+    logger.info("Loading text encoder for NPU [%s] …", precision)
+    text_model = core.read_model(str(static_dir / "text_encoder.xml"))
     text_compiled = core.compile_model(text_model, device, ov_config)
     
     return image_compiled, text_compiled
@@ -268,7 +279,7 @@ def _parse_precision_mode(value: str) -> list[tuple[str, Path]]:
     raise ValueError("precision must be one of: fp16, int8, fp16+int8")
 
 
-def phase_export_npu_static_models() -> dict[str, float]:
+def phase_export_npu_static_models(precision_plan: list[tuple[str, Path]]) -> dict[str, float]:
     """Export image and text encoders to OpenVINO IR with static shapes for NPU.
     
     Exports both image and text encoders separately to enable batch=1 static shape
@@ -277,17 +288,18 @@ def phase_export_npu_static_models() -> dict[str, float]:
     - Text:  (1, 77) token IDs
     """
     import openvino as ov
+    try:
+        import nncf
+    except Exception:
+        nncf = None
     
     _hr("Phase 1  │  Export static models for NPU")
-    
-    if OV_NPU_STATIC_DIR.exists():
-        logger.info("NPU static models already present — skipping export.")
-        return {
-            "npu_export_s": 0.0,
-            "npu_export_cached": True,
-        }
-    
-    OV_NPU_STATIC_DIR.mkdir(parents=True, exist_ok=True)
+
+    requested_precisions = [p for p, _ in precision_plan]
+    export_summary: dict[str, float | bool | list[str]] = {
+        "npu_export_cached": True,
+        "npu_precisions": requested_precisions,
+    }
     t0 = time.perf_counter()
     
     logger.info("Loading OpenCLIP model for static export …")
@@ -295,10 +307,10 @@ def phase_export_npu_static_models() -> dict[str, float]:
         OPENCLIP_MODEL_ID, pretrained=PRETRAINED
     )
     clip_model.eval()
-    tokenizer = open_clip.get_tokenizer(OPENCLIP_MODEL_ID)
-    
+
     # --- Export Image Encoder ---
-    logger.info("Exporting image encoder with static shape (1, 3, %d, %d) …", NPU_IMAGE_SIZE, NPU_IMAGE_SIZE)
+    logger.info("Preparing static shape encoders (image: 1x3x%dx%d, text: 1x%d) …",
+                NPU_IMAGE_SIZE, NPU_IMAGE_SIZE, NPU_CONTEXT_LENGTH)
     
     class ImageEncoder(torch.nn.Module):
         def __init__(self, model):
@@ -310,7 +322,7 @@ def phase_export_npu_static_models() -> dict[str, float]:
     
     image_encoder = ImageEncoder(clip_model)
     image_encoder.eval()
-    dummy_image = torch.randn(1, 3, NPU_IMAGE_SIZE, NPU_IMAGE_SIZE)
+    dummy_image = torch.randn(1, 3, NPU_IMAGE_SIZE, NPU_IMAGE_SIZE, dtype=torch.float32)
     
     with torch.no_grad():
         ov_image_model = ov.convert_model(
@@ -327,9 +339,8 @@ def phase_export_npu_static_models() -> dict[str, float]:
     ov_image_model.reshape({"pixel_values": [1, 3, NPU_IMAGE_SIZE, NPU_IMAGE_SIZE]})
     ov_image_model.validate_nodes_and_infer_types()
     
-    image_xml_path = OV_NPU_STATIC_DIR / "image_encoder.xml"
-    ov.save_model(ov_image_model, str(image_xml_path))
-    logger.info("Saved image encoder to %s", image_xml_path)
+    # Keep a pristine FP32 graph and materialize precision variants from it.
+    base_image_model = ov_image_model.clone()
     
     # --- Export Text Encoder ---
     logger.info("Exporting text encoder with static shape (1, %d) …", NPU_CONTEXT_LENGTH)
@@ -361,20 +372,53 @@ def phase_export_npu_static_models() -> dict[str, float]:
     ov_text_model.reshape({"input_ids": [1, NPU_CONTEXT_LENGTH]})
     ov_text_model.validate_nodes_and_infer_types()
     
-    text_xml_path = OV_NPU_STATIC_DIR / "text_encoder.xml"
-    ov.save_model(ov_text_model, str(text_xml_path))
-    logger.info("Saved text encoder to %s", text_xml_path)
+    base_text_model = ov_text_model.clone()
+
+    def _save_precision_pair(precision: str) -> bool:
+        static_dir = _npu_static_dir_for_precision(precision)
+        image_xml_path = static_dir / "image_encoder.xml"
+        text_xml_path = static_dir / "text_encoder.xml"
+        if image_xml_path.exists() and text_xml_path.exists():
+            logger.info("NPU static models [%s] already present — skipping export.", precision)
+            return True
+
+        static_dir.mkdir(parents=True, exist_ok=True)
+        image_to_save = base_image_model.clone()
+        text_to_save = base_text_model.clone()
+
+        if precision == "INT8":
+            if nncf is None:
+                raise RuntimeError(
+                    "INT8 static export requires nncf. Install it and retry, or use --precision fp16."
+                )
+            logger.info("Applying INT8 weight compression for NPU static models …")
+            image_to_save = nncf.compress_weights(image_to_save, mode=nncf.CompressWeightsMode.INT8_SYM)
+            text_to_save = nncf.compress_weights(text_to_save, mode=nncf.CompressWeightsMode.INT8_SYM)
+            ov.save_model(image_to_save, str(image_xml_path), compress_to_fp16=False)
+            ov.save_model(text_to_save, str(text_xml_path), compress_to_fp16=False)
+        else:
+            ov.save_model(image_to_save, str(image_xml_path), compress_to_fp16=True)
+            ov.save_model(text_to_save, str(text_xml_path), compress_to_fp16=True)
+
+        logger.info("Saved NPU static [%s] image encoder to %s", precision, image_xml_path)
+        logger.info("Saved NPU static [%s] text encoder to %s", precision, text_xml_path)
+        return False
+
+    cached_all = True
+    for precision in requested_precisions:
+        was_cached = _save_precision_pair(precision)
+        cached_all = cached_all and was_cached
+    
     
     # Clean up
-    del clip_model, image_encoder, text_encoder, ov_image_model, ov_text_model
+    del clip_model, image_encoder, text_encoder, ov_image_model, ov_text_model, base_image_model, base_text_model
     
     elapsed = time.perf_counter() - t0
     logger.info("NPU static model export completed in %.1f s", elapsed)
     
-    return {
-        "npu_export_s": elapsed,
-        "npu_export_cached": False,
-    }
+    export_summary["npu_export_s"] = elapsed
+    export_summary["npu_export_cached"] = cached_all
+    return export_summary
 
 
 # ---------------------------------------------------------------------------
@@ -653,12 +697,13 @@ def phase_inference_benchmark_npu(
     tokenizer,
     zeroshot_weights: torch.Tensor,
     labels: list[str],
+    precision: str,
     warmup_runs: int,
     bench_runs: int,
 ) -> dict:
     """Benchmark NPU inference with static shapes. Returns timing statistics."""
 
-    _hr(f"Phase 3  │  Inference benchmark  [NPU static]  warmup={warmup_runs}  runs={bench_runs}")
+    _hr(f"Phase 3  │  Inference benchmark  [NPU static {precision}]  warmup={warmup_runs}  runs={bench_runs}")
 
     # Warmup
     logger.info("Running %d warmup iterations …", warmup_runs)
@@ -693,7 +738,7 @@ def phase_inference_benchmark_npu(
         }
 
     result = {
-        "precision": "NPU-static",
+        "precision": f"NPU-{precision}",
         "runs": bench_runs,
         "warmup_runs": warmup_runs,
         "preprocess":  _stats([t.preprocess_s  for t in all_times]),
@@ -819,22 +864,37 @@ def main() -> None:
     # Early exit for NPU static export only
     if args.export_npu_static:
         logger.info("Running NPU static model export …")
-        export_timings = phase_export_npu_static_models()
-        logger.info("NPU export complete. Models are in: %s", OV_NPU_STATIC_DIR.resolve())
-        print(f"\n  NPU static models saved to: {OV_NPU_STATIC_DIR.resolve()}\n")
+        export_timings = phase_export_npu_static_models(precision_plan)
+        logger.info("NPU export complete. Models are in: %s", OV_NPU_STATIC_BASE_DIR.resolve())
+        print(f"\n  NPU static models saved to: {OV_NPU_STATIC_BASE_DIR.resolve()}\n")
+        print(f"  Exported precision(s): {', '.join(export_timings.get('npu_precisions', []))}\n")
         return
+
+    all_results: dict = {
+        "model_id": MODEL_ID,
+        "runs": args.runs,
+        "warmup_runs": args.warmup,
+        "image_source": args.image or "synthetic",
+    }
 
     ov_device = _resolve_ov_device(args.device)
     logger.info("Using OpenVINO device: %s", ov_device)
+    all_results["ov_device"] = ov_device
 
     # Check if user requested NPU and export static models if needed
     if ov_device.upper() == "NPU":
-        if not (OV_NPU_STATIC_DIR / "image_encoder.xml").exists():
-            logger.info("NPU static models not found. Auto-exporting …")
-            export_timings = phase_export_npu_static_models()
+        missing_precisions: list[str] = []
+        for precision, _ in precision_plan:
+            static_dir = _npu_static_dir_for_precision(precision)
+            if not (static_dir / "image_encoder.xml").exists() or not (static_dir / "text_encoder.xml").exists():
+                missing_precisions.append(precision)
+
+        if missing_precisions:
+            logger.info("NPU static models missing for precision(s): %s. Auto-exporting …", ", ".join(missing_precisions))
+            export_timings = phase_export_npu_static_models(precision_plan)
             all_results["export_npu_static"] = export_timings
         else:
-            logger.info("Using cached NPU static models from %s", OV_NPU_STATIC_DIR)
+            logger.info("Using cached NPU static models from %s", OV_NPU_STATIC_BASE_DIR)
 
     # ── Load labels ────────────────────────────────────────────────────────
     labels = _load_labels()
@@ -847,14 +907,7 @@ def main() -> None:
         logger.info("No image supplied — using synthetic 378×378 test image")
         img_array = _make_sample_image()
 
-    all_results: dict = {
-        "model_id": MODEL_ID,
-        "ov_device": ov_device,
-        "runs": args.runs,
-        "warmup_runs": args.warmup,
-        "image_source": args.image or "synthetic",
-        "n_labels": len(labels),
-    }
+    all_results["n_labels"] = len(labels)
 
     # ── Phase 1: Model export ──────────────────────────────────────────────
     export_timings = phase_export_models()
@@ -886,24 +939,27 @@ def main() -> None:
 
     # Handle NPU separately (uses static models with separate encoders)
     if ov_device.upper() == "NPU":
-        try:
-            ov_image_encoder, ov_text_encoder = _load_npu_static_models(ov_device)
-            
-            result = phase_inference_benchmark_npu(
-                img_array=img_array,
-                processor=processor,
-                ov_image_encoder=ov_image_encoder,
-                ov_text_encoder=ov_text_encoder,
-                tokenizer=tokenizer,
-                zeroshot_weights=zeroshot_weights,
-                labels=labels,
-                warmup_runs=args.warmup,
-                bench_runs=args.runs,
-            )
-            inference_results.append(result)
-        except FileNotFoundError as exc:
-            logger.error("NPU setup failed: %s", exc)
-            raise SystemExit(str(exc)) from exc
+        for precision, _ in precision_plan:
+            try:
+                ov_image_encoder, ov_text_encoder = _load_npu_static_models(precision=precision, device=ov_device)
+
+                result = phase_inference_benchmark_npu(
+                    img_array=img_array,
+                    processor=processor,
+                    ov_image_encoder=ov_image_encoder,
+                    ov_text_encoder=ov_text_encoder,
+                    tokenizer=tokenizer,
+                    zeroshot_weights=zeroshot_weights,
+                    labels=labels,
+                    precision=precision,
+                    warmup_runs=args.warmup,
+                    bench_runs=args.runs,
+                )
+                inference_results.append(result)
+                del ov_image_encoder, ov_text_encoder
+            except FileNotFoundError as exc:
+                logger.error("NPU setup failed: %s", exc)
+                raise SystemExit(str(exc)) from exc
     else:
         # Regular GPU/CPU path with FP16/INT8
         for precision, model_dir in precision_plan:

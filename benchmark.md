@@ -99,10 +99,16 @@ python benchmark.py --image ./sample.jpg
 Export static shape models for NPU inference:
 
 ```bash
-python benchmark.py --export-npu-static
+python benchmark.py --export-npu-static --precision fp16
 ```
 
 This exports separate image and text encoder models with fixed input shapes (378×378 images, 77-token text context) required for Intel NPU compilation.
+
+Export both FP16 and INT8 NPU static variants:
+
+```bash
+python benchmark.py --export-npu-static --precision fp16+int8
+```
 
 ## Options
 
@@ -142,6 +148,19 @@ Intel NPU requires models with static (fixed) input shapes. The `--export-npu-st
 - **Image encoder**: `image_encoder.xml` with static shape (1, 3, 378, 378)
 - **Text encoder**: `text_encoder.xml` with static shape (1, 77)
 
-Both models are saved to `DFN5B-CLIP-ViT-H-14-378-openclip-npu-static/` and can be compiled directly for Intel NPU using OpenVINO's NPU plugin.
+Precision selection is controlled by `--precision`:
+
+- `--precision fp16` exports and runs NPU static FP16 models
+- `--precision int8` exports and runs NPU static INT8 models
+- `--precision fp16+int8` exports/runs both and reports both results
+
+Models are stored per precision:
+
+- `DFN5B-CLIP-ViT-H-14-378-openclip-npu-static/FP16/`
+- `DFN5B-CLIP-ViT-H-14-378-openclip-npu-static/INT8/`
+
+When running with `--device NPU`, the benchmark now auto-checks the selected precision variant(s) and auto-exports missing static models before inference.
+
+Note: INT8 static export uses NNCF weight compression. If `nncf` is not installed, install it first or run `--precision fp16`.
 
 This approach follows the pattern from [wallacezq/zero-shot-image-classification-npu](https://github.com/wallacezq/zero-shot-image-classification-npu), which demonstrates NPU deployment with static shapes.
